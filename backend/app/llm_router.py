@@ -16,6 +16,7 @@ import json
 from typing import Any
 
 from .llm_client import LLMClient
+from .config import get_config
 
 
 # 用于 Function Calling 的工具定义（兼容 OpenAI 格式）
@@ -87,13 +88,17 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "search_contract",
-            "description": "查询合同信息。当用户想了解某个合同的状态、金额、付款情况等时调用。",
+            "description": "智能查询合同记录。不仅支持关键词，还支持高级条件过滤（如按对方单位、状态、金额等过滤）。当用户想查找合同或了解台账数据时调用此工具。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "关键词": {"type": "string", "description": "搜索关键词（合同名称或对方单位）"},
+                    "keyword": {"type": "string", "description": "模糊搜索关键词（合同名称、对应销售合同等）"},
+                    "party_name": {"type": "string", "description": "对方单位名称（精确或部分匹配）"},
+                    "status": {"type": "string", "description": "合同状态，如：执行中、已结项、异常挂起"},
+                    "min_amount": {"type": "number", "description": "最小合同金额限制（大于等于）"},
+                    "max_amount": {"type": "number", "description": "最大合同金额限制（小于等于）"},
                 },
-                "required": ["关键词"],
+                "required": [],
             },
         },
     },
@@ -118,8 +123,14 @@ class LLMRouter:
     """通过 LLM 将自然语言路由解析为结构化工具调用。"""
 
     def __init__(self):
-        self.client = LLMClient()
-        self.conversation_history: list[dict[str, Any]] = []
+        self.client = LLMClient(get_config().chat_llm)
+        # per-session 对话隔离，防止多用户串话
+        self._sessions: dict[str, list[dict[str, Any]]] = {}
+
+    def _get_history(self, session_id: str) -> list[dict[str, Any]]:
+        if session_id not in self._sessions:
+            self._sessions[session_id] = []
+        return self._sessions[session_id]
 
     def _get_system_message(self) -> dict[str, str]:
         from datetime import datetime
@@ -128,7 +139,7 @@ class LLMRouter:
             "content": SYSTEM_PROMPT.format(current_date=datetime.now().strftime("%Y-%m-%d")),
         }
 
-    async def process_message(self, user_message: str) -> dict[str, Any]:
+    async def process_message(self, user_message: str, session_id: str = "default") -> dict[str, Any]:
         """
         通过 LLM 处理用户消息。
 
@@ -138,9 +149,10 @@ class LLMRouter:
             - {"type": "tool_call", "function": "...", "arguments": {...}} 表示需要执行的操作
             - {"type": "clarification", "content": "..."} 表示需要补充信息
         """
-        self.conversation_history.append({"role": "user", "content": user_message})
+        history = self._get_history(session_id)
+        history.append({"role": "user", "content": user_message})
 
-        messages = [self._get_system_message()] + self.conversation_history
+        messages = [self._get_system_message()] + history
 
         response = await self.client.chat(messages=messages, tools=TOOLS)
         message = self.client.get_choice_message(response)
@@ -152,7 +164,7 @@ class LLMRouter:
             arguments = json.loads(tool_call["function"]["arguments"])
 
             # 将助手的消息添加到历史记录
-            self.conversation_history.append(message)
+            history.append(message)
 
             return {
                 "type": "tool_call",
@@ -163,17 +175,69 @@ class LLMRouter:
         else:
             # 纯文本回复
             content = message.get("content", "")
-            self.conversation_history.append({"role": "assistant", "content": content})
+            history.append({"role": "assistant", "content": content})
             return {"type": "text", "content": content}
 
-    def add_tool_result(self, tool_call_id: str, result: str):
+    async def process_message_stream(self, user_message: str, session_id: str = "default"):
+        """
+        通过 LLM 处理用户消息，返回异步生成器以支持流式输出 (SSE)。
+        """
+        history = self._get_history(session_id)
+        history.append({"role": "user", "content": user_message})
+
+        messages = [self._get_system_message()] + history
+
+        is_tool_call = False
+        tool_call_buffer = {"id": "", "function": {"name": "", "arguments": ""}}
+        text_buffer = ""
+
+        async for chunk in self.client.chat_stream(messages=messages, tools=TOOLS):
+            if not chunk.get("choices"):
+                continue
+            delta = chunk["choices"][0].get("delta", {})
+
+            if "tool_calls" in delta and delta["tool_calls"]:
+                is_tool_call = True
+                tc = delta["tool_calls"][0]
+                if "id" in tc and tc["id"]:
+                    tool_call_buffer["id"] = tc["id"]
+                if "function" in tc:
+                    if "name" in tc["function"] and tc["function"]["name"]:
+                        tool_call_buffer["function"]["name"] = tc["function"]["name"]
+                    if "arguments" in tc["function"] and tc["function"]["arguments"]:
+                        tool_call_buffer["function"]["arguments"] += tc["function"]["arguments"]
+
+            elif "content" in delta and delta["content"]:
+                content = delta["content"]
+                text_buffer += content
+                yield json.dumps({"type": "text", "content": content}, ensure_ascii=False) + "\n"
+
+        if is_tool_call:
+            history.append({
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [tool_call_buffer]
+            })
+            yield json.dumps({
+                "type": "tool_call",
+                "function": tool_call_buffer["function"]["name"],
+                "arguments": json.loads(tool_call_buffer["function"]["arguments"] or "{}"),
+                "tool_call_id": tool_call_buffer["id"]
+            }, ensure_ascii=False) + "\n"
+        else:
+            history.append({"role": "assistant", "content": text_buffer})
+            yield json.dumps({"type": "done"}, ensure_ascii=False) + "\n"
+
+    def add_tool_result(self, tool_call_id: str, result: str, session_id: str = "default"):
         """将工具执行结果添加回对话历史记录中。"""
-        self.conversation_history.append({
+        history = self._get_history(session_id)
+        history.append({
             "role": "tool",
             "tool_call_id": tool_call_id,
             "content": result,
         })
 
-    def clear_history(self):
+    def clear_history(self, session_id: str = "default"):
         """清除对话历史记录。"""
-        self.conversation_history.clear()
+        if session_id in self._sessions:
+            del self._sessions[session_id]

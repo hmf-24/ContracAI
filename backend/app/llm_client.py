@@ -17,11 +17,12 @@ from typing import Any
 from .config import get_config
 
 
+from .config import LLMConfig
+
 class LLMClient:
     """兼容 OpenAI 的 LLM 客户端。"""
 
-    def __init__(self):
-        cfg = get_config().llm
+    def __init__(self, cfg: LLMConfig):
         self.base_url = cfg.base_url.rstrip("/")
         self.api_key = cfg.api_key
         self.model = cfg.model
@@ -70,6 +71,44 @@ class LLMClient:
             )
             resp.raise_for_status()
             return resp.json()
+
+    async def chat_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict | None = None,
+    ):
+        """流式聊天"""
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = tools
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
+
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                headers=self._headers(),
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_lines():
+                    if chunk.startswith("data: "):
+                        data_str = chunk[6:]
+                        if data_str == "[DONE]":
+                            break
+                        import json
+                        try:
+                            yield json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
 
     async def chat_with_vision(
         self,

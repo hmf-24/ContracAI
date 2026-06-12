@@ -15,16 +15,22 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from typing import Any
+import json
+import csv
+from io import StringIO
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import uvicorn
 
 from .config import get_config, reload_config, AppConfig
 from .ledger_manager import LedgerManager
 from .llm_router import LLMRouter
 from .doc_parser import DocParser
+from .auth import router as auth_router, get_current_user, get_admin_user
 
 
 # ── 全局变量 ──────────────────────────────────────────────────────
@@ -49,16 +55,17 @@ async def check_warnings_loop():
                 if ledger_instance and cfg.dingtalk_webhook:
                     warnings = ledger_instance.check_expiry_warnings(days_ahead=7)
                     if warnings:
-                        bot = DingTalkBot()
+                        bot = DingTalkBot(cfg.dingtalk_webhook, cfg.dingtalk_secret)
+                        
+                        msg = "## ⚠️ 合同到期预警\n\n"
                         for w in warnings:
-                            await bot.send_expiry_warning(
-                                contract_name=w["合同名称"],
-                                deadline=w["截止日期"],
-                                days_left=w["剩余天数"]
-                            )
+                            msg += f"- **{w['合同名称']}** 将于 {w['截止日期']} 到期（剩余 {w['剩余天数']} 天）\n"
+                            
+                        bot.send_markdown("合同到期预警", msg)
+                        print(f"[{datetime.now()}] 预警推送到钉钉成功")
                 last_check_date = today
         except Exception as e:
-            print(f"后台巡检发生错误: {e}")
+            print(f"后台预警检查异常: {e}")
 
         # 每 1 小时检查一次是否跨天
         await asyncio.sleep(3600)
@@ -76,17 +83,17 @@ async def lifespan(app: FastAPI):
     if cfg.ledger_path and Path(cfg.ledger_path).exists():
         ledger_instance = LedgerManager(cfg.ledger_path)
 
-    # 启动后台合同截止日期巡检任务
-    warning_task = asyncio.create_task(check_warnings_loop())
+    # 临时禁用后台巡检，防止 xlwings 阻塞主事件循环导致死锁
+    # warning_task = asyncio.create_task(check_warnings_loop())
 
     yield
 
     # 取消后台任务
-    warning_task.cancel()
-    try:
-        await warning_task
-    except asyncio.CancelledError:
-        pass
+    # warning_task.cancel()
+    # try:
+    #     await warning_task
+    # except asyncio.CancelledError:
+    #     pass
 
     # 清理
     router_instance = None
@@ -102,48 +109,83 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# 全局异常处理中间件：统一返回友好错误信息
+import traceback
+import logging
+logger = logging.getLogger("contracai")
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled error: {exc}\n{traceback.format_exc()}")
+    return StreamingResponse(
+        iter([json.dumps({"detail": f"服务器内部错误：{str(exc)}"}, ensure_ascii=False)]),
+        status_code=500,
+        media_type="application/json",
+    )
+
+# 挂载鉴权路由
+app.include_router(auth_router, prefix="/api")
+
 # 确定前端路径
+# 优先使用 React 构建输出 (frontend/dist)，兼容旧的原生前端目录
 if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
     FRONTEND_DIR = Path(sys._MEIPASS) / "frontend"
 else:
-    FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
+    _project_root = Path(__file__).resolve().parent.parent.parent
+    _dist_dir = _project_root / "frontend" / "dist"
+    if _dist_dir.exists():
+        FRONTEND_DIR = _dist_dir
+    else:
+        FRONTEND_DIR = _project_root / "frontend"
 
 
 # ── API 接口 ────────────────────────────────────────────────
 
 @app.get("/api/health")
-async def health():
+def health_check(current_user: dict = Depends(get_current_user)):
     """健康检查。"""
-    return {"status": "ok", "ledger_loaded": ledger_instance is not None}
+    return {
+        "status": "ok", 
+        "ledger_loaded": ledger_instance is not None,
+        "config_loaded": get_config().chat_llm.api_key != ""
+    }
 
 
 @app.get("/api/config")
-async def get_current_config():
+async def get_current_config(current_user: dict = Depends(get_admin_user)):
     """获取当前配置（对敏感字段进行脱敏）。"""
     cfg = get_config()
     data = asdict(cfg)
     # 对 API 密钥进行脱敏
-    if data["llm"]["api_key"]:
-        key = data["llm"]["api_key"]
-        data["llm"]["api_key"] = key[:8] + "****" + key[-4:] if len(key) > 12 else "****"
+    if data["chat_llm"]["api_key"]:
+        key = data["chat_llm"]["api_key"]
+        data["chat_llm"]["api_key"] = key[:8] + "****" + key[-4:] if len(key) > 12 else "****"
+    if data["ocr_llm"]["api_key"]:
+        key = data["ocr_llm"]["api_key"]
+        data["ocr_llm"]["api_key"] = key[:8] + "****" + key[-4:] if len(key) > 12 else "****"
     return data
 
 
 @app.post("/api/config")
-async def update_config(config_data: dict[str, Any]):
+async def update_config(config_data: dict[str, Any], current_user: dict = Depends(get_admin_user)):
     """更新并保存配置。"""
     cfg = get_config()
 
     if "ledger_path" in config_data:
         cfg.ledger_path = config_data["ledger_path"]
-    if "llm" in config_data:
-        llm = config_data["llm"]
-        if "base_url" in llm:
-            cfg.llm.base_url = llm["base_url"]
-        if "api_key" in llm:
-            cfg.llm.api_key = llm["api_key"]
-        if "model" in llm:
-            cfg.llm.model = llm["model"]
+        
+    if "chat_llm" in config_data:
+        chat = config_data["chat_llm"]
+        if "base_url" in chat: cfg.chat_llm.base_url = chat["base_url"]
+        if "api_key" in chat: cfg.chat_llm.api_key = chat["api_key"]
+        if "model" in chat: cfg.chat_llm.model = chat["model"]
+        
+    if "ocr_llm" in config_data:
+        ocr = config_data["ocr_llm"]
+        if "base_url" in ocr: cfg.ocr_llm.base_url = ocr["base_url"]
+        if "api_key" in ocr: cfg.ocr_llm.api_key = ocr["api_key"]
+        if "model" in ocr: cfg.ocr_llm.model = ocr["model"]
+        
     if "dingtalk_webhook" in config_data:
         cfg.dingtalk_webhook = config_data["dingtalk_webhook"]
     if "dingtalk_secret" in config_data:
@@ -160,9 +202,61 @@ async def update_config(config_data: dict[str, Any]):
     return {"status": "ok"}
 
 
+@app.post("/api/analyze_risk")
+async def analyze_risk(request: Request, current_user: dict = Depends(get_current_user)):
+    """对合同进行 AI 风险评估，返回 TaskTree 格式"""
+    if not ledger_instance:
+        raise HTTPException(status_code=400, detail="台账文件未配置或未加载")
+
+    body = await request.json()
+    row = body.get("row")
+    if not row:
+        raise HTTPException(status_code=400, detail="缺少参数 row")
+        
+    cfg = get_config()
+    if not cfg.chat_llm.api_key:
+        raise HTTPException(status_code=400, detail="未配置 Chat LLM API Key")
+
+    try:
+        # 获取合同数据
+        from .ledger_manager import ContractRecord
+        # 通过 _read_row 直接读取该行
+        app, wb, sheet = ledger_instance._open_workbook()
+        try:
+            record = ledger_instance._read_row(sheet, row)
+        finally:
+            ledger_instance._close_workbook(app, wb)
+            
+        contract_data = asdict(record)
+        
+        # 组装 prompt
+        prompt = f"""
+请你作为资深采购与财务风控专家，对以下合同数据进行风险评估。
+合同信息：
+{json.dumps(contract_data, ensure_ascii=False, indent=2)}
+
+请以 TaskTree (任务树) 格式输出分析结果。输出必须是严格的 JSON 数组，每个元素包含 id, title, type, content, children。
+要求类型(type)包括：资金风险(fund)、合规预警(compliance)、行动建议(action)。
+不要输出其他无关文字，只输出合法的 JSON。
+"""
+        from .llm_client import LLMClient
+        client = LLMClient(cfg.chat_llm)
+        response_text = client.chat(prompt)
+        
+        # 提取 JSON
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0]
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0]
+            
+        return json.loads(response_text.strip())
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/chat")
-async def chat(body: dict[str, str]):
-    """通过 LLM 路由解析处理自然语言消息。"""
+async def chat(body: dict[str, str], current_user: dict = Depends(get_current_user)):
+    """通过 LLM 路由解析处理自然语言消息（流式）。"""
     if not router_instance:
         raise HTTPException(500, "LLM 路由未初始化")
 
@@ -170,12 +264,18 @@ async def chat(body: dict[str, str]):
     if not message:
         raise HTTPException(400, "消息不能为空")
 
-    result = await router_instance.process_message(message)
-    return result
+    session_id = current_user.get("username", "default")
+    
+    # 包装为 SSE 格式
+    async def sse_generator():
+        async for chunk in router_instance.process_message_stream(message, session_id=session_id):
+            yield f"data: {chunk}"
+            
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")
 
 
 @app.post("/api/execute")
-async def execute_operation(body: dict[str, Any]):
+async def execute_operation(body: dict[str, Any], current_user: dict = Depends(get_admin_user)):
     """在台账上执行已确认的操作。"""
     if not ledger_instance:
         raise HTTPException(500, "台账未加载，请先配置 Excel 文件路径。")
@@ -187,6 +287,13 @@ async def execute_operation(body: dict[str, Any]):
         if action == "create_contract":
             preview = ledger_instance.prepare_new_contract(params)
             results = ledger_instance.execute_pending()
+            db_manager.add_audit_log(
+                user_id=str(current_user.get('id', '')),
+                username=current_user.get('username', ''),
+                action='AI新增合同',
+                target=params.get('合同名称', ''),
+                detail=f"通过智能助手新建合同：{params.get('合同名称', '')}",
+            )
             return {"status": "success", "preview": preview, "results": results}
 
         elif action == "update_milestone":
@@ -195,6 +302,13 @@ async def execute_operation(body: dict[str, Any]):
             date_str = params.get("日期")
             preview = ledger_instance.prepare_milestone_update(row, milestone_type, date_str)
             results = ledger_instance.execute_pending()
+            db_manager.add_audit_log(
+                user_id=str(current_user.get('id', '')),
+                username=current_user.get('username', ''),
+                action='AI更新节点',
+                target=f"行号{row}",
+                detail=f"更新了{milestone_type}为{date_str}",
+            )
             return {"status": "success", "preview": preview, "results": results}
 
         elif action == "append_payment":
@@ -203,6 +317,13 @@ async def execute_operation(body: dict[str, Any]):
             pay_date = params.get("付款时间")
             preview = ledger_instance.prepare_payment(row, amount, pay_date)
             results = ledger_instance.execute_pending()
+            db_manager.add_audit_log(
+                user_id=str(current_user.get('id', '')),
+                username=current_user.get('username', ''),
+                action='AI追加付款',
+                target=f"行号{row}",
+                detail=f"追加付款 {amount} 元于 {pay_date}",
+            )
             return {"status": "success", "preview": preview, "results": results}
 
         elif action == "update_status":
@@ -219,8 +340,97 @@ async def execute_operation(body: dict[str, Any]):
         raise HTTPException(422, str(e))
 
 
+@app.post("/api/contracts/{row_number}")
+async def update_contract_data(row_number: int, body: dict[str, Any], current_user: dict = Depends(get_current_user)):
+    """更新全量数据"""
+    try:
+        # 获取原始数据用于审计
+        old_records = db_manager.get_all_contracts()
+        old = next((r for r in old_records if r.get('row_number') == row_number), None)
+        
+        db_manager.update_contract(row_number, body)
+        
+        db_manager.add_audit_log(
+            user_id=str(current_user.get('id', '')),
+            username=current_user.get('username', ''),
+            action='编辑合同',
+            target=body.get('合同名称', f'行号{row_number}'),
+            detail=f"更新了合同「{body.get('合同名称', '')}」的数据",
+        )
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/contracts/{row_number}")
+async def delete_contract_data(row_number: int, current_user: dict = Depends(get_admin_user)):
+    """删除合同数据。需要管理员权限。"""
+    try:
+        # 获取被删除的合同名称
+        old_records = db_manager.get_all_contracts()
+        old = next((r for r in old_records if r.get('row_number') == row_number), None)
+        contract_name = old.get('合同名称', f'行号{row_number}') if old else f'行号{row_number}'
+        
+        db_manager.delete_contract(row_number)
+        
+        db_manager.add_audit_log(
+            user_id=str(current_user.get('id', '')),
+            username=current_user.get('username', ''),
+            action='删除合同',
+            target=contract_name,
+            detail=f"永久删除了合同「{contract_name}」",
+        )
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/contracts/update")
+async def update_contract(body: dict[str, Any], current_user: dict = Depends(get_current_user)):
+    """更新合同的指定字段（全量覆盖或部分更新取决于前端传参）"""
+    if not ledger_instance:
+        raise HTTPException(500, "台账未加载")
+    
+    row = body.get("row")
+    data = body.get("data")
+    if row is None or not data:
+        raise HTTPException(400, "缺少参数 row 或 data")
+    
+    # 获取原始数据
+    from .db_manager import get_all_contracts, update_contract
+    records = get_all_contracts()
+    original = next((r for r in records if r.get("row_number") == row), None)
+    if not original:
+        raise HTTPException(404, f"找不到行号为 {row} 的合同")
+        
+    # 合并更新
+    original.update(data)
+    update_contract(row, original)
+    
+    # 记录日志
+    db_manager.add_audit_log(
+        user_id=str(current_user.get('id', '')),
+        username=current_user.get('username', ''),
+        action='更新字段',
+        target=original.get('合同名称', f"行号{row}"),
+        detail=f"更新了部分字段: {list(data.keys())}",
+    )
+    
+    return {"status": "success", "message": "更新成功"}
+
+
+@app.get("/api/audit-logs")
+async def get_audit_logs(limit: int = 100, offset: int = 0, current_user: dict = Depends(get_admin_user)):
+    """获取操作审计日志（需要管理员权限）"""
+    try:
+        logs = db_manager.get_audit_logs(limit, offset)
+        total = db_manager.get_audit_log_count()
+        return {"logs": logs, "total": total}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/contracts")
-async def list_contracts():
+async def list_contracts(current_user: dict = Depends(get_current_user)):
     """列出台账中的所有合同。"""
     if not ledger_instance:
         raise HTTPException(500, "台账未加载")
@@ -228,19 +438,92 @@ async def list_contracts():
     records = ledger_instance.get_all_contracts()
     return {"contracts": [asdict(r) for r in records]}
 
+class ExportRequest(BaseModel):
+    row_ids: list[int]
+    columns: list[str]
 
-@app.get("/api/contracts/search")
-async def search_contracts(q: str):
-    """通过关键词搜索合同。"""
+@app.post("/api/contracts/export")
+async def export_contracts(request: ExportRequest, current_user: dict = Depends(get_current_user)):
+    """导出指定行和列的合同为 CSV。"""
     if not ledger_instance:
         raise HTTPException(500, "台账未加载")
 
-    records = ledger_instance.search_contracts(q)
-    return {"contracts": [asdict(r) for r in records]}
+    records = ledger_instance.get_all_contracts()
+    # 筛选记录
+    selected_records = [r for r in records if getattr(r, "row_number", -1) in request.row_ids]
+
+    output = StringIO()
+    # 写入 BOM 以防 Excel 中文乱码
+    output.write('\\ufeff')
+    writer = csv.writer(output)
+    writer.writerow(request.columns)
+
+    for r in selected_records:
+        data_dict = asdict(r)
+        row_data = [str(data_dict.get(col, "")) for col in request.columns]
+        writer.writerow(row_data)
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=contracts_export.csv"}
+    )
+
+
+@app.post("/api/contracts/search")
+async def search_contracts(body: dict[str, Any], current_user: dict = Depends(get_current_user)):
+    """智能查询接口，支持多维度过滤"""
+    if not ledger_instance:
+        raise HTTPException(500, "台账未加载")
+
+    records = ledger_instance.get_all_contracts()
+    
+    keyword = body.get("keyword", "")
+    party_name = body.get("party_name", "")
+    status = body.get("status", "")
+    min_amount = body.get("min_amount")
+    max_amount = body.get("max_amount")
+
+    results = []
+    for r in records:
+        r_dict = r if isinstance(r, dict) else r.__dict__
+        
+        # 1. 关键词过滤
+        if keyword:
+            kw = keyword.lower()
+            match = False
+            for field in ["合同名称", "对应销售合同", "对方单位名称", "合同编号", "采购方式"]:
+                if kw in str(r_dict.get(field, "")).lower():
+                    match = True
+                    break
+            if not match:
+                continue
+                
+        # 2. 对方单位过滤
+        if party_name:
+            if party_name.lower() not in str(r_dict.get("对方单位名称", "")).lower():
+                continue
+                
+        # 3. 状态过滤
+        if status:
+            if r_dict.get("合同状态", "") != status:
+                continue
+                
+        # 4. 金额过滤
+        amount = float(r_dict.get("合同金额") or 0)
+        if min_amount is not None and amount < min_amount:
+            continue
+        if max_amount is not None and amount > max_amount:
+            continue
+            
+        results.append(r_dict)
+        
+    return {"contracts": results}
 
 
 @app.get("/api/warnings")
-async def get_warnings():
+async def get_warnings(current_user: dict = Depends(get_current_user)):
     """获取合同到期预警和自动关闭候选清单。"""
     if not ledger_instance:
         raise HTTPException(500, "台账未加载")
@@ -252,7 +535,7 @@ async def get_warnings():
 
 
 @app.post("/api/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...), current_user: dict = Depends(get_admin_user)):
     """上传并解析合同文件（PDF/Word/图片）。"""
     if not parser_instance:
         raise HTTPException(500, "文档解析器未初始化")
@@ -287,6 +570,11 @@ async def serve_index():
 
 
 # 挂载静态文件（CSS、JS、资源）
+from .config import CONFIG_DIR
+avatar_dir = CONFIG_DIR / "avatars"
+avatar_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/avatars", StaticFiles(directory=str(avatar_dir)), name="avatars")
+
 if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
 
@@ -299,30 +587,12 @@ def start_server():
 
 
 def main():
-    """主入口点：启动 FastAPI 服务 + pywebview 窗口。"""
-    # 在后台启动服务
-    server_thread = threading.Thread(target=start_server, daemon=True)
-    server_thread.start()
-
-    # 给服务一点启动时间
-    import time
-    time.sleep(1)
-
-    try:
-        import webview
-
-        window = webview.create_window(
-            title="ContracAI - 采购合同台账智能管理系统",
-            url="http://127.0.0.1:18920",
-            width=1280,
-            height=800,
-            min_size=(1024, 600),
-        )
-        webview.start()
-    except ImportError:
-        print("未安装 pywebview。将以纯服务模式运行。")
-        print("请在浏览器中打开 http://127.0.0.1:18920")
-        server_thread.join()
+    """主入口点：启动 FastAPI 服务。"""
+    print("==================================================")
+    print("ContracAI Backend Service Started")
+    print("Please open in browser: http://127.0.0.1:18920")
+    print("==================================================")
+    start_server()
 
 
 if __name__ == "__main__":

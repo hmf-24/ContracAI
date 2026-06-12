@@ -32,8 +32,10 @@ class AppConfig:
     """顶级应用程序配置。"""
     # Excel 台账文件路径
     ledger_path: str = ""
-    # LLM 设置
-    llm: LLMConfig = field(default_factory=LLMConfig)
+    # 对话推理模型 (Chat)
+    chat_llm: LLMConfig = field(default_factory=LLMConfig)
+    # 视觉多模态模型 (OCR)
+    ocr_llm: LLMConfig = field(default_factory=LLMConfig)
     # 钉钉（保留用于未来功能）
     dingtalk_webhook: str = ""
     dingtalk_secret: str = ""
@@ -51,8 +53,21 @@ class AppConfig:
             try:
                 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                llm_data = data.pop("llm", {})
-                return cls(llm=LLMConfig(**llm_data), **data)
+                
+                # 向后兼容逻辑：将旧的 "llm" 映射到 "chat_llm"
+                if "llm" in data and "chat_llm" not in data:
+                    data["chat_llm"] = data.pop("llm")
+                else:
+                    data.pop("llm", None) # 清除旧的废弃字段
+
+                chat_llm_data = data.pop("chat_llm", {})
+                ocr_llm_data = data.pop("ocr_llm", {})
+                
+                return cls(
+                    chat_llm=LLMConfig(**chat_llm_data), 
+                    ocr_llm=LLMConfig(**ocr_llm_data), 
+                    **data
+                )
             except (json.JSONDecodeError, TypeError):
                 pass
         return cls()

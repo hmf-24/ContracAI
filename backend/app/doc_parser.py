@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .llm_client import LLMClient
+from .config import get_config
 
 
 EXTRACTION_PROMPT = """请从以下合同文本中提取关键信息，以 JSON 格式返回。如果某个字段在文本中未提及，设为空字符串。
@@ -76,7 +77,7 @@ class DocParser:
     """将合同文档（PDF、Word、图像）解析为结构化数据。"""
 
     def __init__(self):
-        self.client = LLMClient()
+        self.client = LLMClient(get_config().ocr_llm)
 
     async def parse_file(self, file_path: str | Path) -> dict[str, Any]:
         """

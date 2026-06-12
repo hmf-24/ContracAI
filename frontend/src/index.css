@@ -1,0 +1,149 @@
+/* ============================================================
+   ContracAI — 全局设计系统与基础样式
+   风格: Sci-Fi Glassmorphism (Marisync Style)
+   深邃暗黑 + 极光点缀
+   ============================================================ */
+
+/* 国内 CDN 字体 */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@400;500;600;700&display=swap');
+@import url('https://cdn.jsdelivr.net/npm/harmonyos-sans-font@1.0.3/css/index.min.css');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    
+    --bg-dark: #0A0F1C;
+    --bg-darker: #060913;
+    
+    /* Premium Muted Colors */
+    --neon-cyan: #3B82F6; /* Soft Blue */
+    --neon-cyan-glow: rgba(59, 130, 246, 0.3);
+    --neon-blue: #60A5FA;
+    --neon-blue-glow: rgba(96, 165, 250, 0.3);
+    --neon-green: #10B981; /* Emerald */
+    --neon-green-glow: rgba(16, 185, 129, 0.3);
+    --neon-orange: #F59E0B; /* Amber/Gold */
+    --neon-orange-glow: rgba(245, 158, 11, 0.3);
+    --neon-purple: #8B5CF6; /* Violet */
+    --neon-purple-glow: rgba(139, 92, 246, 0.3);
+  }
+
+  body {
+    @apply m-0 p-0 font-sans antialiased text-white;
+    background-color: var(--bg-dark);
+    background-image: 
+      radial-gradient(circle at 50% 0%, rgba(41, 121, 255, 0.15), transparent 50%),
+      radial-gradient(circle at 80% 80%, rgba(139, 92, 246, 0.1), transparent 50%),
+      linear-gradient(rgba(10, 15, 28, 0.8), rgba(6, 9, 19, 0.95)),
+      url('/bg-landscape.png');
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+}
+
+@layer utilities {
+  /* 基础高级毛玻璃 */
+  .glass-panel {
+    background: radial-gradient(120% 120% at 50% -20%, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.01));
+    backdrop-filter: blur(32px);
+    -webkit-backdrop-filter: blur(32px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    border-radius: 16px;
+    position: relative;
+    overflow: hidden;
+  }
+  
+  /* 发光悬浮 */
+  .glass-panel-active {
+    background: radial-gradient(120% 120% at 50% -20%, rgba(59, 130, 246, 0.05), rgba(59, 130, 246, 0.01));
+    backdrop-filter: blur(32px);
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    box-shadow: 0 10px 40px -10px rgba(59, 130, 246, 0.1), inset 0 0 15px rgba(59, 130, 246, 0.05);
+    border-radius: 16px;
+    position: relative;
+  }
+  
+  /* 顶部高亮边条 (柔和光效) */
+  .glow-top-cyan::before { content: ''; position: absolute; top: 0; left: 10%; width: 80%; height: 1px; background: radial-gradient(circle, var(--neon-cyan), transparent 80%); box-shadow: 0 0 8px var(--neon-cyan-glow); }
+  .glow-top-purple::before { content: ''; position: absolute; top: 0; left: 10%; width: 80%; height: 1px; background: radial-gradient(circle, var(--neon-purple), transparent 80%); box-shadow: 0 0 8px var(--neon-purple-glow); }
+  .glow-top-yellow::before { content: ''; position: absolute; top: 0; left: 10%; width: 80%; height: 1px; background: radial-gradient(circle, var(--neon-orange), transparent 80%); box-shadow: 0 0 8px var(--neon-orange-glow); }
+  .glow-top-green::before { content: ''; position: absolute; top: 0; left: 10%; width: 80%; height: 1px; background: radial-gradient(circle, var(--neon-green), transparent 80%); box-shadow: 0 0 8px var(--neon-green-glow); }
+
+  /* 文字发光 */
+  .neon-text-cyan {
+    color: var(--neon-cyan);
+    text-shadow: 0 0 10px var(--neon-cyan-glow);
+  }
+
+  .neon-text-blue {
+    color: var(--neon-blue);
+    text-shadow: 0 0 10px var(--neon-blue-glow);
+  }
+
+  .neon-text-green {
+    color: var(--neon-green);
+    text-shadow: 0 0 10px var(--neon-green-glow);
+  }
+
+  /* 边框发光 */
+  .neon-border-cyan {
+    border-color: var(--neon-cyan);
+    box-shadow: 0 0 10px var(--neon-cyan-glow);
+  }
+
+  .flex-center {
+    @apply flex items-center justify-center;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* Ant Design Overrides for Dark Mode */
+.ant-table { background: transparent !important; }
+.ant-table-thead > tr > th {
+  background: rgba(255, 255, 255, 0.05) !important;
+  color: rgba(255,255,255,0.85) !important;
+  border-bottom: 1px solid rgba(255,255,255,0.1) !important;
+}
+.ant-table-tbody > tr > td { border-bottom: 1px solid rgba(255,255,255,0.1) !important; }
+.ant-table-tbody > tr:hover > td { background: rgba(255, 255, 255, 0.03) !important; }
+.ant-drawer-body { background: rgba(10, 20, 45, 0.95) !important; }
+
+/* Dashboard Typography */
+.page-title {
+  font-size: 1.8rem;
+  font-weight: 600;
+  color: #FFFFFF;
+  margin-bottom: 0.5rem;
+  text-align: center;
+}
+.page-subtitle {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: center;
+  margin-bottom: 2rem;
+}

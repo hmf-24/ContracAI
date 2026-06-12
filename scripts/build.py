@@ -23,7 +23,7 @@ def build():
         "--name=ContracAI",
         "--onedir",      # 生成文件夹目录，方便调试
         "--windowed",     # 窗口模式，不显示命令行黑色控制台
-        f"--add-data=frontend{os.pathsep}frontend",
+        f"--add-data=frontend/dist{os.pathsep}frontend",
         "backend/app/main.py"
     ]
     
