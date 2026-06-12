@@ -33,6 +33,37 @@ ledger_instance: LedgerManager | None = None
 parser_instance: DocParser | None = None
 
 
+async def check_warnings_loop():
+    """定期（如每小时检查一次，每日推送一次）巡检合同到期并发送钉钉通知。"""
+    from datetime import datetime
+    from .dingtalk import DingTalkBot
+    # 启动后先等待 10 秒，让系统完全初始化
+    await asyncio.sleep(10)
+
+    last_check_date = None
+    while True:
+        try:
+            today = datetime.now().date()
+            if last_check_date != today:
+                cfg = get_config()
+                if ledger_instance and cfg.dingtalk_webhook:
+                    warnings = ledger_instance.check_expiry_warnings(days_ahead=7)
+                    if warnings:
+                        bot = DingTalkBot()
+                        for w in warnings:
+                            await bot.send_expiry_warning(
+                                contract_name=w["合同名称"],
+                                deadline=w["截止日期"],
+                                days_left=w["剩余天数"]
+                            )
+                last_check_date = today
+        except Exception as e:
+            print(f"后台巡检发生错误: {e}")
+
+        # 每 1 小时检查一次是否跨天
+        await asyncio.sleep(3600)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用程序生命周期：在启动时初始化服务。"""
@@ -45,7 +76,17 @@ async def lifespan(app: FastAPI):
     if cfg.ledger_path and Path(cfg.ledger_path).exists():
         ledger_instance = LedgerManager(cfg.ledger_path)
 
+    # 启动后台合同截止日期巡检任务
+    warning_task = asyncio.create_task(check_warnings_loop())
+
     yield
+
+    # 取消后台任务
+    warning_task.cancel()
+    try:
+        await warning_task
+    except asyncio.CancelledError:
+        pass
 
     # 清理
     router_instance = None
@@ -62,7 +103,10 @@ app = FastAPI(
 )
 
 # 确定前端路径
-FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    FRONTEND_DIR = Path(sys._MEIPASS) / "frontend"
+else:
+    FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
 
 
 # ── API 接口 ────────────────────────────────────────────────
@@ -158,6 +202,13 @@ async def execute_operation(body: dict[str, Any]):
             amount = params.get("付款金额")
             pay_date = params.get("付款时间")
             preview = ledger_instance.prepare_payment(row, amount, pay_date)
+            results = ledger_instance.execute_pending()
+            return {"status": "success", "preview": preview, "results": results}
+
+        elif action == "update_status":
+            row = params.get("row")
+            status = params.get("status")
+            preview = ledger_instance.prepare_status_update(row, status)
             results = ledger_instance.execute_pending()
             return {"status": "success", "preview": preview, "results": results}
 

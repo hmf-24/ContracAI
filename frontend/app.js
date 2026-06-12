@@ -292,10 +292,104 @@ async function loadLedger() {
         <td>${c.截止日期 || '-'}</td>
       </tr>
     `).join('');
+
+    // 加载预警信息
+    loadWarnings();
   } catch {
     tbody.innerHTML = '<tr><td colspan="8" class="empty-state">无法连接后端服务</td></tr>';
   }
 }
+
+async function loadWarnings() {
+  const container = document.getElementById('ledger-warnings');
+  if (!container) return;
+
+  try {
+    const resp = await fetch(`${API_BASE}/warnings`);
+    const data = await resp.json();
+
+    const expiry = data.expiry_warnings || [];
+    const closure = data.closure_candidates || [];
+
+    if (expiry.length === 0 && closure.length === 0) {
+      container.style.display = 'none';
+      container.innerHTML = '';
+      return;
+    }
+
+    container.style.display = 'flex';
+    let html = '';
+
+    // 合同到期预警
+    expiry.forEach(w => {
+      html += `
+        <div class="warning-card">
+          <div class="warning-info">
+            <span class="warning-icon">⚠️</span>
+            <div class="warning-text">
+              <strong>合同即将到期预警</strong>
+              <p>合同 <strong>「${w.合同名称}」</strong> 将于 <strong>${w.截止日期}</strong> 到期。</p>
+              <div class="meta">剩余天数：${w.剩余天数} 天 (行号: ${w.row})</div>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    // 自动结项建议
+    closure.forEach(c => {
+      html += `
+        <div class="warning-card closure">
+          <div class="warning-info">
+            <span class="warning-icon">💡</span>
+            <div class="warning-text">
+              <strong>自动结项建议</strong>
+              <p>合同 <strong>「${c.合同名称}」</strong> (对方: ${c.对方单位名称}) 已退还保证金且未付款合计为 0。</p>
+              <div class="meta">建议状态流转为：已结项 (行号: ${c.row})</div>
+            </div>
+          </div>
+          <div class="warning-actions">
+            <button class="btn-warning-action" onclick="closeContract(${c.row}, '${c.合同名称}')">一键结项</button>
+          </div>
+        </div>
+      `;
+    });
+
+    container.innerHTML = html;
+  } catch (err) {
+    console.error('加载预警失败:', err);
+    container.style.display = 'none';
+  }
+}
+
+async function closeContract(row, name) {
+  if (!confirm(`确定要将合同「${name}」状态更新为 "已结项" 吗？`)) return;
+
+  try {
+    const resp = await fetch(`${API_BASE}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'update_status',
+        params: { row: row, status: '已结项' }
+      }),
+    });
+
+    const result = await resp.json();
+    if (result.status === 'success') {
+      alert('✅ 合同状态已更新为 "已结项"！');
+      // 重新加载台账与预警
+      loadLedger();
+    } else {
+      alert('⚠️ 执行失败: ' + JSON.stringify(result));
+    }
+  } catch (err) {
+    alert('❌ 请求失败: ' + err.message);
+  }
+}
+
+// 绑定到全局以供 HTML 中 onclick 调用
+window.closeContract = closeContract;
 
 document.getElementById('refresh-ledger')?.addEventListener('click', loadLedger);
 

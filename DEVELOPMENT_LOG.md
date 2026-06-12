@@ -6,6 +6,23 @@
 
 ## 📅 每日开发记录
 
+### 2026-06-12 (功能增强、Bug 修复、测试补全与打包发布)
+- **【核心逻辑增强】**：
+  - 在 `LedgerManager` 中添加了合同状态更新机制（如将状态流转为 `'已结项'`)，并解耦了 `openpyxl` 依赖，重写了纯 Python 自置的 `get_column_letter` 列字母转换算法，提升轻量性与鲁棒性。
+  - 在 `main.py` 的应用启动生命周期中集成了后台定时任务 `check_warnings_loop`，每小时自动检查日期跨天，跨天后若满足条件则调用 `DingTalkBot` 自动向钉钉群推送即将到期的合同预警。
+- **【前端功能升级】**：
+  - 在前端台账预览页顶部新增了主动预警栏，用于渲染从 `/api/warnings` 接口获取的**合同即将到期预警**与**自动结项建议**。
+  - 在自动结项卡片旁集成了「一键结项」功能，前端与后端交互，一键自动物理写入 Excel 将合同变更为 `已结项` 状态并自动重载。
+- **【关键 Bug 修复】**：
+  - 修复了 `doc_parser.py` 中由于 `EXTRACTION_PROMPT` 包含 JSON 格式单花括号 `{}` 导致调用 `.format()` 抛出 `KeyError` 报错的致命 Bug（已将其整体转义为双花括号 `{{}}`）。
+- **【开发测试闭环】**：
+  - 补全了 `tests/test_ledger.py`：对 Excel 台账的增删改查、资金追加及防呆超额进行了真实环境下的集成测试。
+  - 补全了 `tests/test_parser.py`：利用 `unittest.mock` 实现了对大模型意图识别（NLU）和文档提取的全 Mock 测试。
+  - 经测试，全部单元与集成测试均顺利通过（`Ran 8 tests, OK`）。
+- **【虚拟环境与自动打包】**：
+  - 建立了独立的本地 Python 虚拟环境（`venv`）并完整部署了依赖库。
+  - 编写了 `scripts/build.py` 自动化 PyInstaller 打包构建脚本，并成功打包发布出精简独立的 Windows 桌面应用目录（可执行文件位于 `dist/ContracAI/ContracAI.exe`）。
+
 ### 2026-06-11 (项目初始化与结构搭建)
 - **【后端开发】**：
   - 搭建了基于 FastAPI 的后端骨架，配置了 CORS 与静态文件托管。
@@ -28,37 +45,37 @@
 
 ## 📊 模块进度清单
 
-### 1. 后端核心能力 (Done: 90%)
+### 1. 后端核心能力 (Done: 100%)
 - [x] API 配置文件持久化 (`backend/app/config.py`)
 - [x] 统一 OpenAI 兼容客户端封装 (`backend/app/llm_client.py`)
 - [x] Excel 物理列映射与数据读写核心 (`backend/app/ledger_manager.py`)
 - [x] LLM 意图识别与参数解析 (`backend/app/llm_router.py`)
 - [x] 混合文件解析（Word、PDF、图片）及 LLM 信息提取 (`backend/app/doc_parser.py`)
 - [x] 自动结项建议与截止日期到期预警机制
-- [ ] 单元测试用例实现 (`tests/`) — *待补充具体断言测试*
-- [ ] 钉钉机器人集成 (`backend/app/dingtalk.py`) — *当前为预留框架*
+- [x] 单元测试用例实现 (`tests/`) 
+- [x] 钉钉机器人集成 (`backend/app/dingtalk.py` & lifespan 轮询) 
 
-### 2. 前端桌面交互 (Done: 85%)
+### 2. 前端桌面交互 (Done: 100%)
 - [x] 现代深色玻璃微动特效 UI 布局 (`frontend/index.html` & `index.css`)
 - [x] 智能对话气泡、输入框自动撑高与打字机动效
 - [x] 操作二次确认卡片（防误触写入）
 - [x] 合同拖拽上传、智能字段展示与手动核对确认
 - [x] 配置项保存与测试连接
-- [ ] 主动预警及弹窗提醒（到期预警、自动结项）的前端可视化展示
+- [x] 主动预警及弹窗提醒（到期预警、自动结项）的前端可视化展示与一键结项交互
 
-### 3. 系统集成与打包 (Done: 50%)
+### 3. 系统集成与打包 (Done: 100%)
 - [x] pywebview 桌面窗体外壳集成 (`backend/app/main.py`)
-- [ ] 虚拟环境依赖精简与打包配置
-- [ ] 使用 PyInstaller 打包为免安装单文件 `.exe`
+- [x] 虚拟环境依赖精简与打包配置
+- [x] 使用 PyInstaller 打包为免安装桌面应用文件夹 (`dist/ContracAI/`)
 
 ---
 
 ## 🚀 后续待办事项 (TODO)
 
-1. **功能联调与模型微调**：
-   - 接入实际的 MiniMax M3 API Key 进行大模型解析测试。
-   - 优化 Prompt，提高在面对复杂合同文本时信息提取的稳定度与字段准确率。
-2. **物理 Excel 操作鲁棒性增强**：
-   - 添加 Excel 文件占用检测（如用户在 WPS/Office 中打开了台账时，写入需要进行防占用的异常捕获）。
-3. **一键打包**：
-   - 编写 `scripts/build.py` 脚本，支持通过 PyInstaller 自动化将 Python 环境、FastAPI 以及前端文件打包为一个独立的 Windows `.exe` 程序。
+1. **实际运行测试与大模型联调**：
+   - 填入实际的 MiniMax M3 API Key 进行真实合同的智能解析和 NLU 对话调试。
+   - 对视觉 OCR 识别提取的字段进行校验，针对特殊格式合同进行微调和 Prompt 升级。
+2. **多用户协同与文件锁捕获**：
+   - 当他人通过 WPS 或 Office 占用 Excel 文件导致无法写入时，增加友好的错误重试与通知引导（当前系统已有防呆提示，仍可进一步优化交互）。
+3. **打包为单文件 .exe**：
+   - 目前使用 `--onedir` 方便查看与调试打包结果，未来在测试无误后，可在 `scripts/build.py` 中将参数变更为 `--onefile` 打包为纯单个 `.exe` 程序。

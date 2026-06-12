@@ -48,6 +48,15 @@ from dataclasses import dataclass, field
 # import xlwings as xw
 
 
+def get_column_letter(col_idx: int) -> str:
+    """将1-based列索引转换为Excel列字母（例如 1 -> 'A', 27 -> 'AA'）"""
+    result = []
+    while col_idx > 0:
+        col_idx, remainder = divmod(col_idx - 1, 26)
+        result.append(chr(65 + remainder))
+    return "".join(reversed(result))
+
+
 # --- 列常量 ---
 COL = {
     "序号": "A",
@@ -322,6 +331,24 @@ class LedgerManager:
         self._pending_operations.append(preview)
         return preview
 
+    def prepare_status_update(self, row: int, status: str) -> dict[str, Any]:
+        """
+        准备更新合同状态。返回预览以供确认。
+
+        参数:
+            row: 目标行号。
+            status: 新的合同状态（如 '已结项'）。
+        """
+        preview = {
+            "action": "update_status",
+            "target_row": row,
+            "field": "合同状态",
+            "column": "N",
+            "new_value": status,
+        }
+        self._pending_operations.append(preview)
+        return preview
+
     # ----------------------------------------------------------------
     # 3.3 付款记录追加（核心难点）
     # ----------------------------------------------------------------
@@ -359,7 +386,6 @@ class LedgerManager:
             if target_col is None:
                 raise ValueError("所有付款列已满，无法追加新的付款记录")
 
-            from openpyxl.utils import get_column_letter
             amount_col_letter = get_column_letter(target_col)
             time_col_letter = get_column_letter(target_col + 1)
 
@@ -405,6 +431,8 @@ class LedgerManager:
                     result = self._exec_milestone(sheet, op)
                 elif action == "append_payment":
                     result = self._exec_payment(sheet, op)
+                elif action == "update_status":
+                    result = self._exec_status(sheet, op)
                 else:
                     result = {"status": "error", "message": f"未知操作: {action}"}
                 results.append(result)
@@ -461,6 +489,13 @@ class LedgerManager:
         sheet.range(f"{op['amount_column']}{row}").value = op["amount"]
         sheet.range(f"{op['time_column']}{row}").value = op["pay_date"]
         return {"status": "success", "action": "append_payment", "row": row}
+
+    def _exec_status(self, sheet, op: dict) -> dict:
+        """执行合同状态更新。"""
+        row = op["target_row"]
+        col = op["column"]
+        sheet.range(f"{col}{row}").value = op["new_value"]
+        return {"status": "success", "action": "update_status", "row": row}
 
     def _fix_summary_formulas(self, sheet, summary_row: int):
         """

@@ -842,3 +842,81 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
 }
+
+/* ── 预警卡片 ──────────────────────────────────────────── */
+.warnings-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.warning-card {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: var(--radius-md);
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  animation: fadeIn var(--transition-base) ease-out;
+}
+
+.warning-card.closure {
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+}
+
+.warning-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.warning-icon {
+  font-size: 20px;
+}
+
+.warning-text {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.warning-text strong {
+  color: var(--text-primary);
+}
+
+.warning-text p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.warning-text .meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.warning-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.btn-warning-action {
+  padding: 6px 12px;
+  font-size: 11px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  background: var(--accent-gradient);
+  color: white;
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn-warning-action:hover {
+  box-shadow: var(--shadow-glow);
+  transform: translateY(-1px);
+}
+
