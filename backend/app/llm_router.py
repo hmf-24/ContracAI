@@ -87,18 +87,14 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "search_contract",
-            "description": "智能查询合同记录。不仅支持关键词，还支持高级条件过滤（如按对方单位、状态、金额等过滤）。当用户想查找合同或了解台账数据时调用此工具。",
+            "name": "save_preference",
+            "description": "保存用户的偏好或纠错设定（如'我说的金额都是指万元'，'含税通常是13%'）。当用户提出长期有效的规则或纠正AI的理解时调用此工具。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "keyword": {"type": "string", "description": "模糊搜索关键词（合同名称、对应销售合同等）"},
-                    "party_name": {"type": "string", "description": "对方单位名称（精确或部分匹配）"},
-                    "status": {"type": "string", "description": "合同状态，如：执行中、已结项、异常挂起"},
-                    "min_amount": {"type": "number", "description": "最小合同金额限制（大于等于）"},
-                    "max_amount": {"type": "number", "description": "最大合同金额限制（小于等于）"},
+                    "preference": {"type": "string", "description": "要保存的偏好或规则内容"},
                 },
-                "required": [],
+                "required": ["preference"],
             },
         },
     },
@@ -132,11 +128,19 @@ class LLMRouter:
             self._sessions[session_id] = []
         return self._sessions[session_id]
 
-    def _get_system_message(self) -> dict[str, str]:
+    def _get_system_message(self, session_id: str, current_message: str) -> dict[str, str]:
         from datetime import datetime
+        from .memory_manager import memory_manager
+        
+        # 召回长期记忆
+        memories = memory_manager.query_memory(session_id, current_message)
+        memory_context = ""
+        if memories:
+            memory_context = "\n用户的历史长期偏好设定：\n- " + "\n- ".join(memories) + "\n请在回答和提取数据时务必遵守上述设定。"
+
         return {
             "role": "system",
-            "content": SYSTEM_PROMPT.format(current_date=datetime.now().strftime("%Y-%m-%d")),
+            "content": SYSTEM_PROMPT.format(current_date=datetime.now().strftime("%Y-%m-%d")) + memory_context,
         }
 
     async def process_message(self, user_message: str, session_id: str = "default") -> dict[str, Any]:
@@ -150,9 +154,9 @@ class LLMRouter:
             - {"type": "clarification", "content": "..."} 表示需要补充信息
         """
         history = self._get_history(session_id)
-        history.append({"role": "user", "content": user_message})
-
-        messages = [self._get_system_message()] + history
+        
+        # 构建本次调用的消息列表
+        messages = [self._get_system_message(session_id, user_message)] + history + [{"role": "user", "content": user_message}]
 
         response = await self.client.chat(messages=messages, tools=TOOLS)
         message = self.client.get_choice_message(response)
@@ -178,14 +182,17 @@ class LLMRouter:
             history.append({"role": "assistant", "content": content})
             return {"type": "text", "content": content}
 
-    async def process_message_stream(self, user_message: str, session_id: str = "default"):
+    async def process_message_stream(self, user_message: str, session_id: str = "default", context: str = ""):
         """
         通过 LLM 处理用户消息，返回异步生成器以支持流式输出 (SSE)。
         """
         history = self._get_history(session_id)
-        history.append({"role": "user", "content": user_message})
-
-        messages = [self._get_system_message()] + history
+        
+        final_message = user_message
+        if context:
+            final_message = f"{context}\n\n[用户问题]\n{user_message}"
+            
+        messages = [self._get_system_message(session_id, final_message)] + history + [{"role": "user", "content": final_message}]
 
         is_tool_call = False
         tool_call_buffer = {"id": "", "function": {"name": "", "arguments": ""}}

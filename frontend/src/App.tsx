@@ -15,6 +15,7 @@ import ImportPanel from './components/ImportPanel';
 import SettingsPanel from './components/SettingsPanel';
 import LoginPanel from './components/LoginPanel';
 import DashboardPanel from './components/DashboardPanel';
+import GraphPanel from './components/GraphPanel';
 import AuditLogDrawer from './components/AuditLogDrawer';
 import { getHealth, uploadAvatar } from './api';
 import { useAuth } from './contexts/AuthContext';
@@ -28,6 +29,7 @@ export default function App() {
   const [auditVisible, setAuditVisible] = useState(false);
   const [connected, setConnected] = useState(false);
   const [ledgerLoaded, setLedgerLoaded] = useState(false);
+  const [ledgerSearchKeyword, setLedgerSearchKeyword] = useState<string>('');
 
   useEffect(() => {
     const handleUnauthorized = () => {
@@ -62,7 +64,7 @@ export default function App() {
 
   const centralMenuItems = [
     { key: 'dashboard', icon: <TableOutlined />, label: '数据看板' },
-    { key: 'chat', icon: <MessageOutlined />, label: '智能对话' },
+    { key: 'graph', icon: <ProfileOutlined />, label: '关系图谱' },
     { key: 'ledger', icon: <TableOutlined />, label: '台账预览' },
   ];
 
@@ -70,8 +72,11 @@ export default function App() {
 
   const panels: Record<string, React.ReactNode> = {
     dashboard: <DashboardPanel />,
-    chat: <ChatPanel />,
-    ledger: <LedgerPanel />,
+    ledger: <LedgerPanel initialSearchKeyword={ledgerSearchKeyword} />,
+    graph: <GraphPanel onNodeClick={(nodeId) => {
+      setLedgerSearchKeyword(nodeId);
+      setActivePanel('ledger');
+    }} />,
     settings: user?.role === 'admin' ? <SettingsPanel onSaved={checkHealth} /> : <div>权限不足</div>,
   };
 

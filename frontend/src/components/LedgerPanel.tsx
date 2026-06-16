@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Table, Button, Tag, Alert, message, Modal, Drawer, Descriptions, Progress, Timeline, Space, Tree, Checkbox, Typography, Form, Input, InputNumber, Select, DatePicker, Row, Col } from 'antd';
+import { Table, Button, Tag, Alert, message, Modal, Drawer, Descriptions, Progress, Timeline, Space, Tree, Checkbox, Typography, Form, Input, InputNumber, Select, DatePicker, Row, Col, FloatButton } from 'antd';
 import { ReloadOutlined, WarningOutlined, BulbOutlined, ProfileOutlined, UploadOutlined, RobotOutlined, CheckCircleOutlined, ExclamationCircleOutlined, DownloadOutlined, PlusOutlined, MinusCircleOutlined, DeleteOutlined, SearchOutlined, FilterOutlined } from '@ant-design/icons';
 import { getContracts, getWarnings, executeOperation, analyzeRisk, updateContract, deleteContract } from '../api';
 import dayjs from 'dayjs';
 import { useAuth } from '../contexts/AuthContext';
 import ImportPanel from './ImportPanel';
+import ChatPanel from './ChatPanel';
 import type { ColumnsType } from 'antd/es/table';
 
 /** 将日期字符串统一格式化为 YYYY-MM-DD，去掉多余的 00:00:00 */
@@ -45,7 +46,7 @@ interface ClosureCandidate {
   row: number;
 }
 
-export default function LedgerPanel() {
+export default function LedgerPanel({ initialSearchKeyword = '' }: { initialSearchKeyword?: string }) {
   const { user } = useAuth();
   const [contracts, setContracts] = useState<ContractRecord[]>([]);
   const [warnings, setWarnings] = useState<ExpiryWarning[]>([]);
@@ -55,6 +56,9 @@ export default function LedgerPanel() {
   // Drawer state
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [selectedContract, setSelectedContract] = useState<ContractRecord | null>(null);
+
+  // Chat Copilot state
+  const [chatDrawerVisible, setChatDrawerVisible] = useState(false);
 
   // Risk Analysis state
   const [analyzingRisk, setAnalyzingRisk] = useState(false);
@@ -82,7 +86,7 @@ export default function LedgerPanel() {
   const [editForm] = Form.useForm();
 
   // 筛选状态
-  const [filterKeyword, setFilterKeyword] = useState('');
+  const [filterKeyword, setFilterKeyword] = useState(initialSearchKeyword);
   const [filterStatus, setFilterStatus] = useState<string | undefined>(undefined);
   const [filterMinAmount, setFilterMinAmount] = useState<number | undefined>(undefined);
   const [filterMaxAmount, setFilterMaxAmount] = useState<number | undefined>(undefined);
@@ -135,6 +139,12 @@ export default function LedgerPanel() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (initialSearchKeyword) {
+      setFilterKeyword(initialSearchKeyword);
+    }
+  }, [initialSearchKeyword]);
 
   async function handleExport() {
     setExporting(true);
@@ -716,6 +726,30 @@ export default function LedgerPanel() {
           </Form>
         </div>
       </Modal>
+
+      {/* 智能助理浮窗按钮 */}
+      <FloatButton
+        icon={<RobotOutlined />}
+        type="primary"
+        style={{ right: 24, bottom: 24, width: 60, height: 60 }}
+        tooltip="唤醒智能助理 (Copilot)"
+        onClick={() => setChatDrawerVisible(true)}
+      />
+
+      {/* 智能助理 Drawer */}
+      <Drawer
+        title="🤖"
+        placement="right"
+        width={450}
+        onClose={() => setChatDrawerVisible(false)}
+        open={chatDrawerVisible}
+        styles={{ body: { padding: 0 } }}
+      >
+        <ChatPanel 
+          selectedContracts={selectedRowKeys.map(k => contracts.find(c => c['序号'] === k)).filter(Boolean)} 
+          onLedgerUpdate={loadData} 
+        />
+      </Drawer>
     </div>
   );
 }

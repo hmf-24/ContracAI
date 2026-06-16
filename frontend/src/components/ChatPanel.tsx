@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Input, Button, Spin, message, Table, Tag, Drawer, Descriptions } from 'antd';
-import { SendOutlined } from '@ant-design/icons';
+import { Input, Button, Spin, message, Table, Tag, Drawer, Descriptions, Upload } from 'antd';
+import { SendOutlined, FilePdfOutlined } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import { 
   getContracts, executeOperation, searchContractsAdvanced, API_BASE
@@ -38,7 +38,7 @@ const ACTION_LABELS: Record<string, string> = {
    组件
    ──────────────────────────────────────────────────────────── */
 
-export default function ChatPanel() {
+export default function ChatPanel({ selectedContracts = [], onLedgerUpdate }: { selectedContracts?: any[], onLedgerUpdate?: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: 'system',
@@ -50,34 +50,10 @@ export default function ChatPanel() {
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // 搜索结果状态
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [selectedContract, setSelectedContract] = useState<any | null>(null);
-  const [drawerVisible, setDrawerVisible] = useState(false);
-
-  const columns = [
-    { title: '合同名称', dataIndex: '合同名称', ellipsis: true },
-    { title: '对方单位', dataIndex: '对方单位名称', ellipsis: true },
-    { title: '合同金额', dataIndex: '合同金额', width: 120, align: 'right' as const, render: (v: any) => v != null ? `¥${Number(v).toLocaleString()}` : '-' },
-    { title: '状态', dataIndex: '合同状态', width: 100, align: 'center' as const, render: (v: any) => {
-        const color = v === '执行中' ? 'green' : v === '已结项' ? 'default' : 'orange';
-        return <Tag color={color}>{v || '-'}</Tag>;
-    }},
-    { title: '签订时间', dataIndex: '签订时间', width: 120, align: 'center' as const }
-  ];
-
-  /** 初始化时加载全量合同到右侧表格 */
-  useEffect(() => {
-    (async () => {
-      try {
-        setSearchLoading(true);
-        const res = await getContracts();
-        setSearchResults(res.contracts || []);
-      } catch { /* ignore */ }
-      finally { setSearchLoading(false); }
-    })();
-  }, []);
+  /** 当传入 selectedContracts 时，可以组装一个上下文前缀给 AI */
+  const contextPrefix = selectedContracts.length > 0 
+    ? `[隐式上下文] 用户当前在台账中选中了以下合同：\n${selectedContracts.map(c => `- ${c['合同名称']} (金额: ${c['合同金额']})`).join('\n')}\n请在回答问题时优先考虑这些合同。`
+    : '';
 
   /** 自动滚动到最新消息 */
   useEffect(() => {
@@ -107,7 +83,7 @@ export default function ChatPanel() {
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({ message: text })
+        body: JSON.stringify({ message: text, context: contextPrefix })
       });
 
       if (!response.ok) {
@@ -161,15 +137,13 @@ export default function ChatPanel() {
       // 如果流结束后发现这是一个工具调用
       if (finalToolCall) {
         if (finalToolCall.function === 'search_contract') {
-          setSearchLoading(true);
           try {
             const result = await searchContractsAdvanced(finalToolCall.arguments || {});
-            setSearchResults(result.contracts || []);
             setMessages((prev) => {
               const newMessages = [...prev];
               newMessages[assistantMsgIndex] = { 
                 role: 'assistant', 
-                content: `✅ 为您找到 **${result.contracts?.length || 0}** 条符合条件的合同记录，已在右侧表格为您展示。` 
+                content: `✅ 为您找到 **${result.contracts?.length || 0}** 条符合条件的合同。请关闭助理在主视图中搜索或筛选。` 
               };
               return newMessages;
             });
@@ -179,8 +153,6 @@ export default function ChatPanel() {
               newMessages[assistantMsgIndex] = { role: 'assistant', content: `❌ 查询失败: ${e.message}` };
               return newMessages;
             });
-          } finally {
-            setSearchLoading(false);
           }
         } else {
           setMessages((prev) => {
@@ -203,7 +175,7 @@ export default function ChatPanel() {
     } finally {
       setLoading(false);
     }
-  }, [inputValue, loading, messages.length]);
+  }, [inputValue, loading, messages.length, contextPrefix]);
 
   /* ── 确认执行操作 ────────────────────────────────────── */
 
@@ -219,10 +191,14 @@ export default function ChatPanel() {
         toolCall.arguments!
       );
       if (result.status === 'success') {
+        const msg = result.results && typeof result.results[0] === 'string' 
+          ? result.results[0] 
+          : '✅ 操作已成功执行！台账已更新！';
         setMessages((prev) => [
           ...prev,
-          { role: 'assistant', content: '✅ 操作已成功执行！台账已更新！' },
+          { role: 'assistant', content: msg },
         ]);
+        onLedgerUpdate?.();
       } else {
         setMessages((prev) => [
           ...prev,
@@ -247,13 +223,54 @@ export default function ChatPanel() {
     ]);
   }
 
+  /* ── 上传文件处理 ────────────────────────────────────── */
+  
+  const handleFileUpload = async (file: File) => {
+    setMessages(prev => [...prev, { role: 'user', content: `[上传文件] ${file.name}` }]);
+    setLoading(true);
+    
+    const token = localStorage.getItem('token');
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    try {
+      const res = await fetch(`${API_BASE}/upload`, {
+        method: 'POST',
+        headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
+        body: formData
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || '解析失败');
+      
+      setMessages(prev => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: '',
+          toolCall: {
+            type: 'tool_call',
+            function: 'create_contract',
+            arguments: data.extracted
+          }
+        }
+      ]);
+    } catch (err: any) {
+      setMessages(prev => [...prev, { role: 'assistant', content: `❌ 文件解析失败: ${err.message}` }]);
+    } finally {
+      setLoading(false);
+    }
+    
+    return false; // 阻止默认上传
+  };
+
   /* ── 渲染 ────────────────────────────────────────────── */
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       
-      {/* 侧边栏：智能查询对话区 */}
-      <div style={{ width: '400px', display: 'flex', flexDirection: 'column', borderRight: '1px solid rgba(255,255,255,0.06)', flexShrink: 0, background: 'rgba(10, 15, 28, 0.6)', backdropFilter: 'blur(20px)' }}>
+      {/* 对话区域 */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'rgba(10, 15, 28, 0.6)', backdropFilter: 'blur(20px)' }}>
         <div style={{ height: 'var(--header-height, 56px)', display: 'flex', alignItems: 'center', padding: '0 24px', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
           <div>
             <h1 style={{ fontSize: 18, fontWeight: 600, margin: 0, color: '#fff' }}>智能查询</h1>
@@ -274,14 +291,21 @@ export default function ChatPanel() {
         </div>
 
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: 16, background: 'rgba(10, 15, 28, 0.8)', flexShrink: 0 }}>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <Upload 
+              accept=".pdf,.docx,.jpg,.png" 
+              showUploadList={false} 
+              beforeUpload={handleFileUpload}
+            >
+              <Button type="default" icon={<FilePdfOutlined />} disabled={loading} style={{ background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)' }} />
+            </Upload>
             <TextArea
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onPressEnter={(e) => {
                 if (!e.shiftKey) { e.preventDefault(); handleSend(); }
               }}
-              placeholder="找什么合同？例如：今年华为的已结项合同"
+              placeholder="找什么合同？例如：今年华为的已结项合同..."
               autoSize={{ minRows: 1, maxRows: 5 }}
               disabled={loading}
               style={{ flex: 1 }}
@@ -291,53 +315,6 @@ export default function ChatPanel() {
         </div>
       </div>
 
-      {/* 右侧：查询结果表格区 */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ padding: '16px 32px', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
-          <h2 style={{ fontSize: 16, margin: 0, fontWeight: 600, color: '#fff' }}>查询结果台账 ({searchResults.length})</h2>
-        </div>
-        <div style={{ flex: 1, overflowY: 'auto', padding: '24px 32px' }}>
-          <div className="glass-panel" style={{ padding: 0 }}>
-            <Table
-              columns={columns}
-              dataSource={searchResults}
-              rowKey="row_number"
-              loading={searchLoading}
-              size="middle"
-              pagination={{ pageSize: 15 }}
-              onRow={(record) => ({
-                onClick: () => {
-                  setSelectedContract(record);
-                  setDrawerVisible(true);
-                },
-                style: { cursor: 'pointer' }
-              })}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* 右侧详情 Drawer */}
-      <Drawer
-        title="合同明细"
-        width={600}
-        placement="right"
-        onClose={() => setDrawerVisible(false)}
-        open={drawerVisible}
-      >
-        {selectedContract && (
-          <Descriptions bordered size="small" column={1}>
-            <Descriptions.Item label="合同名称">{selectedContract['合同名称']}</Descriptions.Item>
-            <Descriptions.Item label="合同编号">{selectedContract['合同编号']}</Descriptions.Item>
-            <Descriptions.Item label="对方单位">{selectedContract['对方单位名称']}</Descriptions.Item>
-            <Descriptions.Item label="合同金额">¥{Number(selectedContract['合同金额'] || 0).toLocaleString()}</Descriptions.Item>
-            <Descriptions.Item label="状态"><Tag color={selectedContract['合同状态'] === '执行中' ? 'green' : 'default'}>{selectedContract['合同状态']}</Tag></Descriptions.Item>
-            <Descriptions.Item label="签订时间">{selectedContract['签订时间']}</Descriptions.Item>
-            <Descriptions.Item label="截止日期">{selectedContract['截止日期']}</Descriptions.Item>
-            <Descriptions.Item label="备注">{selectedContract['备注']}</Descriptions.Item>
-          </Descriptions>
-        )}
-      </Drawer>
     </div>
   );
 }

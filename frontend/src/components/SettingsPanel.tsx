@@ -177,7 +177,7 @@ export default function SettingsPanel({ onSaved }: { onSaved?: () => void }) {
                       </Form.Item>
                     </Col>
                     <Col span={12}>
-                      <Form.Item name="chat_llm_api_key" label={<span>API Key <Tooltip title="仅在修改时输入"><InfoCircleOutlined/></Tooltip></span>}>
+                      <Form.Item name="chat_llm_api_key" label="API Key">
                         <Input.Password placeholder={chatApiPlaceholder} iconRender={v => v ? <EyeOutlined /> : <EyeInvisibleOutlined />} />
                       </Form.Item>
                     </Col>
@@ -216,7 +216,7 @@ export default function SettingsPanel({ onSaved }: { onSaved?: () => void }) {
                       </Form.Item>
                     </Col>
                     <Col span={12}>
-                      <Form.Item name="ocr_llm_api_key" label={<span>API Key <Tooltip title="仅在修改时输入"><InfoCircleOutlined/></Tooltip></span>}>
+                      <Form.Item name="ocr_llm_api_key" label="API Key">
                         <Input.Password placeholder={ocrApiPlaceholder} iconRender={v => v ? <EyeOutlined /> : <EyeInvisibleOutlined />} />
                       </Form.Item>
                     </Col>

@@ -240,3 +240,8 @@ export async function updateConfig(data: Record<string, any>) {
     body: JSON.stringify(data),
   });
 }
+
+/** 获取现金流沙盘推演结果 */
+export async function getCashflowSimulation() {
+  return request<any>('/simulation/cashflow');
+}

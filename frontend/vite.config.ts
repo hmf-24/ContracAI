@@ -28,6 +28,10 @@ export default defineConfig(({ mode }) => ({
         target: 'http://127.0.0.1:18920',
         changeOrigin: true,
       },
+      '/avatars': {
+        target: 'http://127.0.0.1:18920',
+        changeOrigin: true,
+      },
     } : undefined,
   },
 }));

@@ -219,15 +219,12 @@ async def analyze_risk(request: Request, current_user: dict = Depends(get_curren
 
     try:
         # 获取合同数据
-        from .ledger_manager import ContractRecord
-        # 通过 _read_row 直接读取该行
-        app, wb, sheet = ledger_instance._open_workbook()
-        try:
-            record = ledger_instance._read_row(sheet, row)
-        finally:
-            ledger_instance._close_workbook(app, wb)
-            
-        contract_data = asdict(record)
+        # 获取合同数据
+        from .db_manager import get_all_contracts
+        records = get_all_contracts()
+        contract_data = next((r for r in records if r.get('row_number') == row), None)
+        if not contract_data:
+            raise HTTPException(status_code=404, detail="未找到目标合同")
         
         # 组装 prompt
         prompt = f"""
@@ -255,12 +252,13 @@ async def analyze_risk(request: Request, current_user: dict = Depends(get_curren
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat")
-async def chat(body: dict[str, str], current_user: dict = Depends(get_current_user)):
+async def chat(body: dict[str, Any], current_user: dict = Depends(get_current_user)):
     """通过 LLM 路由解析处理自然语言消息（流式）。"""
     if not router_instance:
         raise HTTPException(500, "LLM 路由未初始化")
 
     message = body.get("message", "")
+    context = body.get("context", "")
     if not message:
         raise HTTPException(400, "消息不能为空")
 
@@ -268,7 +266,7 @@ async def chat(body: dict[str, str], current_user: dict = Depends(get_current_us
     
     # 包装为 SSE 格式
     async def sse_generator():
-        async for chunk in router_instance.process_message_stream(message, session_id=session_id):
+        async for chunk in router_instance.process_message_stream(message, session_id=session_id, context=context):
             yield f"data: {chunk}"
             
     return StreamingResponse(sse_generator(), media_type="text/event-stream")
@@ -295,6 +293,20 @@ async def execute_operation(body: dict[str, Any], current_user: dict = Depends(g
                 detail=f"通过智能助手新建合同：{params.get('合同名称', '')}",
             )
             return {"status": "success", "preview": preview, "results": results}
+
+        elif action == "save_preference":
+            preference = params.get("preference")
+            from .memory_manager import memory_manager
+            session_id = current_user.get("username", "default")
+            memory_manager.add_memory(session_id, preference)
+            db_manager.add_audit_log(
+                user_id=str(current_user.get('id', '')),
+                username=current_user.get('username', ''),
+                action='保存记忆',
+                target='全局长期记忆',
+                detail=f"保存了偏好设定：{preference}",
+            )
+            return {"status": "success", "preview": None, "results": [f"已牢记您的偏好：{preference}"]}
 
         elif action == "update_milestone":
             row = params.get("row")
@@ -338,6 +350,65 @@ async def execute_operation(body: dict[str, Any], current_user: dict = Depends(g
 
     except ValueError as e:
         raise HTTPException(422, str(e))
+
+
+@app.get("/api/graph")
+async def get_graph_data(current_user: dict = Depends(get_current_user)):
+    """提取图谱关系数据。"""
+    from .db_manager import get_all_contracts
+    contracts = get_all_contracts()
+    
+    nodes = []
+    links = []
+    
+    # 使用 set 去重
+    node_ids = set()
+    
+    def add_node(id_str, name, group, val=1):
+        if id_str and id_str not in node_ids:
+            nodes.append({"id": id_str, "name": name, "group": group, "val": val})
+            node_ids.add(id_str)
+            
+    for c in contracts:
+        contract_id = f"C_{c.get('row_number')}"
+        contract_name = c.get('合同名称') or f"未知合同 {c.get('row_number')}"
+        is_sales = "销售" in c.get('合同类型', '')
+        # 1: 销售合同, 2: 采购合同
+        c_group = 1 if is_sales else 2
+        amount = c.get('合同金额') or 0
+        val = max(1, min(10, amount / 100000)) # 根据金额粗略计算节点大小
+        
+        add_node(contract_id, contract_name, c_group, val=val)
+        
+        # 提取对方单位 (Group 3)
+        party = c.get('对方单位名称')
+        if party and party.strip():
+            party_id = f"P_{party.strip()}"
+            add_node(party_id, party.strip(), 3)
+            links.append({"source": contract_id, "target": party_id, "name": "签约方"})
+            
+        # 提取经办人 (Group 4)
+        handler = c.get('经办人')
+        if handler and handler.strip() and handler.strip() != "-":
+            handler_id = f"H_{handler.strip()}"
+            add_node(handler_id, handler.strip(), 4)
+            links.append({"source": contract_id, "target": handler_id, "name": "经办"})
+            
+        # 提取对应销售合同依赖关系
+        parent_sales = c.get('对应销售合同')
+        if parent_sales and parent_sales.strip() and parent_sales.strip() != "-":
+            # 寻找具有这个名称的合同
+            parent_match = next((p for p in contracts if p.get('合同名称') == parent_sales.strip()), None)
+            if parent_match:
+                parent_id = f"C_{parent_match.get('row_number')}"
+                links.append({"source": contract_id, "target": parent_id, "name": "依赖于"})
+            else:
+                # 即使没有找到，也创建一个临时节点
+                parent_id = f"C_ext_{parent_sales.strip()}"
+                add_node(parent_id, parent_sales.strip(), 1)
+                links.append({"source": contract_id, "target": parent_id, "name": "依赖于"})
+                
+    return {"nodes": nodes, "links": links}
 
 
 @app.post("/api/contracts/{row_number}")
@@ -556,6 +627,17 @@ async def upload_document(file: UploadFile = File(...), current_user: dict = Dep
     finally:
         # 清理临时文件
         Path(tmp_path).unlink(missing_ok=True)
+
+
+@app.get("/api/simulation/cashflow")
+async def get_cashflow_simulation(current_user: dict = Depends(get_current_user)):
+    """获取现金流沙盘推演结果"""
+    try:
+        from .simulation_engine import run_cashflow_simulation
+        result = run_cashflow_simulation(initial_cash=500000.0) # 调低初始资金以便展示预警
+        return {"status": "success", "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── 托管前端静态文件 ───────────────────────────────────────────────

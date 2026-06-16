@@ -4,9 +4,9 @@ import {
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend,
   Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
-  AreaChart, Area
+  AreaChart, Area, LineChart, Line, ReferenceLine
 } from 'recharts';
-import { getContracts } from '../api';
+import { getContracts, getCashflowSimulation } from '../api';
 
 const { Title, Text } = Typography;
 
@@ -15,6 +15,7 @@ const COLORS = ['var(--neon-cyan)', 'var(--neon-green)', '#FADB14', '#FF4D4F', '
 export default function DashboardPanel() {
   const [contracts, setContracts] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [simulationData, setSimulationData] = useState<any>(null);
 
   useEffect(() => {
     loadData();
@@ -23,10 +24,14 @@ export default function DashboardPanel() {
   async function loadData() {
     setLoading(true);
     try {
-      const res = await getContracts();
+      const [res, simRes] = await Promise.all([
+        getContracts(),
+        getCashflowSimulation()
+      ]);
       setContracts(res.contracts || []);
+      setSimulationData(simRes.data || null);
     } catch {
-      message.error('无法加载台账数据');
+      message.error('无法加载台账及推演数据');
     } finally {
       setLoading(false);
     }
@@ -127,6 +132,57 @@ export default function DashboardPanel() {
         <h1 className="page-title">采购智能分析</h1>
         <p className="page-subtitle">实时合同追踪与资金运作全景视图</p>
       </div>
+
+      {/* Cashflow Simulation */}
+      {simulationData && (
+        <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
+          <Col span={24}>
+            <div className="glass-panel glow-top-cyan" style={{ padding: 24 }}>
+              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 18, display: 'block', marginBottom: 16 }}>
+                未来 6 个月现金流沙盘推演预警
+              </Text>
+              
+              <Row gutter={[24, 24]}>
+                <Col span={16}>
+                  <div style={{ height: 350 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={simulationData.chart_data} margin={{ top: 20, right: 20, left: 20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                        <XAxis dataKey="month" tick={{ fill: 'rgba(255,255,255,0.6)' }} axisLine={false} tickLine={false} />
+                        <YAxis tick={{ fill: 'rgba(255,255,255,0.6)' }} axisLine={false} tickLine={false} />
+                        <ReferenceLine y={200000} label="安全底线" stroke="var(--neon-orange)" strokeDasharray="3 3" />
+                        <Line type="monotone" dataKey="cash" name="预估现金(元)" stroke="var(--neon-cyan)" strokeWidth={3} dot={{ r: 6, fill: '#0a0f1c', stroke: 'var(--neon-cyan)', strokeWidth: 2 }} activeDot={{ r: 8 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Col>
+                <Col span={8}>
+                  <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'center' }}>
+                    {simulationData.warnings?.length > 0 ? (
+                      <div className="glass-panel-active" style={{ padding: 24, borderRadius: 12, border: '1px solid var(--neon-orange)' }}>
+                        <div style={{ fontSize: 18, color: 'var(--neon-orange)', marginBottom: 16, fontWeight: 600 }}>
+                          资金链预警触发
+                        </div>
+                        {simulationData.warnings.map((warn: string, idx: number) => (
+                          <div key={idx} style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14, lineHeight: '1.6', marginBottom: 16 }}>
+                            {warn}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="glass-panel-active" style={{ padding: 24, borderRadius: 12, border: '1px solid var(--neon-green)' }}>
+                        <div style={{ fontSize: 18, color: 'var(--neon-green)', fontWeight: 600 }}>
+                          资金流健康
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </Col>
+              </Row>
+            </div>
+          </Col>
+        </Row>
+      )}
 
       {/* Row 1: KPI Cards */}
       <Row gutter={[24, 24]}>
