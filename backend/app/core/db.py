@@ -18,9 +18,15 @@ def init_db():
                 id INTEGER PRIMARY KEY,
                 contract_no TEXT,
                 name TEXT,
-                data TEXT
+                data TEXT,
+                sort_order INTEGER DEFAULT 0
             )
         """)
+        # 尝试添加 sort_order 字段（如果表已存在且无此字段）
+        try:
+            conn.execute("ALTER TABLE contracts ADD COLUMN sort_order INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS operation_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,20 +56,22 @@ def is_db_empty() -> bool:
 def insert_contracts(records: List[Dict[str, Any]]):
     with get_connection() as conn:
         for r in records:
+            _id = r.get("row_number")
             conn.execute(
-                "INSERT INTO contracts (id, contract_no, name, data) VALUES (?, ?, ?, ?)",
+                "INSERT INTO contracts (id, contract_no, name, data, sort_order) VALUES (?, ?, ?, ?, ?)",
                 (
-                    r.get("row_number"), 
+                    _id, 
                     r.get("合同编号", ""), 
                     r.get("合同名称", ""), 
-                    json.dumps(r, ensure_ascii=False)
+                    json.dumps(r, ensure_ascii=False),
+                    _id
                 )
             )
         conn.commit()
 
 def get_all_contracts() -> List[Dict[str, Any]]:
     with get_connection() as conn:
-        cursor = conn.execute("SELECT data FROM contracts ORDER BY id ASC")
+        cursor = conn.execute("SELECT data FROM contracts ORDER BY sort_order ASC, id ASC")
         return [json.loads(row["data"]) for row in cursor]
 
 def update_contract(row_id: int, updated_data: Dict[str, Any]):
@@ -91,16 +99,26 @@ def insert_contract(new_data: Dict[str, Any]) -> int:
         new_id = max_id + 1
         new_data["row_number"] = new_id
         conn.execute(
-            "INSERT INTO contracts (id, contract_no, name, data) VALUES (?, ?, ?, ?)",
+            "INSERT INTO contracts (id, contract_no, name, data, sort_order) VALUES (?, ?, ?, ?, ?)",
             (
                 new_id, 
                 new_data.get("合同编号", ""), 
                 new_data.get("合同名称", ""), 
-                json.dumps(new_data, ensure_ascii=False)
+                json.dumps(new_data, ensure_ascii=False),
+                new_id
             )
         )
         conn.commit()
         return new_id
+
+def update_sort_orders(id_list: List[int]):
+    with get_connection() as conn:
+        for index, row_id in enumerate(id_list):
+            conn.execute(
+                "UPDATE contracts SET sort_order = ? WHERE id = ?",
+                (index, row_id)
+            )
+        conn.commit()
 
 def search_contracts(keyword: str) -> List[Dict[str, Any]]:
     with get_connection() as conn:

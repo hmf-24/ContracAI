@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, List
 from dataclasses import dataclass, field, asdict
 
-from . import db_manager
+from ..core import db as db_manager
 
 
 @dataclass
@@ -256,6 +256,17 @@ class LedgerManager:
 
         return warnings
 
+    def bulk_delete_contracts(self, row_numbers: list[int]) -> bool:
+        """批量删除合同记录"""
+        for r in row_numbers:
+            db_manager.delete_contract(r)
+        return True
+
+    def reorder_contracts(self, ids: list[int]) -> bool:
+        """重排序合同记录"""
+        db_manager.update_sort_orders(ids)
+        return True
+
     def get_all_contracts(self) -> list[ContractRecord]:
         db_records = db_manager.get_all_contracts()
         return [ContractRecord(**r) for r in db_records]
@@ -263,3 +274,10 @@ class LedgerManager:
     def search_contracts(self, keyword: str) -> list[ContractRecord]:
         db_records = db_manager.search_contracts(keyword)
         return [ContractRecord(**r) for r in db_records]
+ledger_instance = LedgerManager('')
+
+
+
+from ..core.config import get_config
+cfg = get_config()
+ledger_instance = LedgerManager(cfg.ledger_path) if cfg.ledger_path else None

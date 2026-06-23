@@ -15,8 +15,8 @@ LedgerManager 对应的结构化工具调用。
 import json
 from typing import Any
 
-from .llm_client import LLMClient
-from .config import get_config
+from ...core.llm import LLMClient
+from ...core.config import get_config
 
 
 # 用于 Function Calling 的工具定义（兼容 OpenAI 格式）
@@ -98,6 +98,27 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_skill",
+            "description": "当发现用户在近期频繁执行某种固定模式的操作流时，主动建议将该模式沉淀为一个技能（Skill）。必须在观察到明确的重复模式时才能调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "技能名称，如'月末批量付款'"},
+                    "description": {"type": "string", "description": "概括该技能的作用"},
+                    "trigger": {"type": "string", "description": "自然语言触发条件，如'用户说：月底批量付款'"},
+                    "steps": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "技能执行的具体步骤列表"
+                    }
+                },
+                "required": ["title", "description", "trigger", "steps"],
+            },
+        },
+    },
 ]
 
 SYSTEM_PROMPT = """你是一个采购合同台账管理助手。你的职责是理解用户的自然语言指令，并调用相应的工具函数来操作合同台账。
@@ -130,13 +151,38 @@ class LLMRouter:
 
     def _get_system_message(self, session_id: str, current_message: str) -> dict[str, str]:
         from datetime import datetime
-        from .memory_manager import memory_manager
+        from .memory import memory_manager
         
         # 召回长期记忆
         memories = memory_manager.query_memory(session_id, current_message)
+        
+        # 召回操作记忆
+        episodic_memories = memory_manager.query_episodic_memory(session_id, current_message, n_results=4) # 增加召回数量以利于识别模式
+        
+        # 召回近期纠错规律
+        recent_corrections = memory_manager.get_recent_corrections(session_id, limit=5)
+        
+        # 加载已有的技能
+        from ...services.skill_service import skill_manager
+        skills_context = skill_manager.get_enabled_skills_context()
+        
         memory_context = ""
         if memories:
-            memory_context = "\n用户的历史长期偏好设定：\n- " + "\n- ".join(memories) + "\n请在回答和提取数据时务必遵守上述设定。"
+            memory_context += "\n用户的历史长期偏好设定：\n- " + "\n- ".join(memories)
+            
+        if skills_context:
+            memory_context += "\n\n" + skills_context
+            
+        if episodic_memories:
+            memory_context += "\n\n近期相关操作记录（分析这些记录，如果发现高度重复的多步操作模式，可调用 propose_skill 工具主动建议沉淀为技能）：\n- " + "\n- ".join(episodic_memories)
+            
+        if recent_corrections:
+            memory_context += "\n\n用户的近期纠错记录（注意避免重复犯错）：\n"
+            for c in recent_corrections:
+                memory_context += f"- 字段「{c['field']}」: AI原提取「{c['ai_value']}」, 用户手动修改为「{c['user_value']}」 (场景: {c['context']})\n"
+                
+        if memory_context:
+            memory_context = "\n" + memory_context + "\n\n请在回答和提取数据时务必参考并遵守上述记忆设定。"
 
         return {
             "role": "system",
@@ -248,3 +294,4 @@ class LLMRouter:
         """清除对话历史记录。"""
         if session_id in self._sessions:
             del self._sessions[session_id]
+llm_router = LLMRouter()

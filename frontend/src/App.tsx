@@ -30,6 +30,11 @@ export default function App() {
   const [connected, setConnected] = useState(false);
   const [ledgerLoaded, setLedgerLoaded] = useState(false);
   const [ledgerSearchKeyword, setLedgerSearchKeyword] = useState<string>('');
+  const [avatarError, setAvatarError] = useState(false);
+
+  useEffect(() => {
+    setAvatarError(false);
+  }, [user?.avatar]);
 
   useEffect(() => {
     const handleUnauthorized = () => {
@@ -64,6 +69,7 @@ export default function App() {
 
   const centralMenuItems = [
     { key: 'dashboard', icon: <TableOutlined />, label: '数据看板' },
+    { key: 'import', icon: <UploadOutlined />, label: '合同导入' },
     { key: 'graph', icon: <ProfileOutlined />, label: '关系图谱' },
     { key: 'ledger', icon: <TableOutlined />, label: '台账预览' },
   ];
@@ -72,6 +78,7 @@ export default function App() {
 
   const panels: Record<string, React.ReactNode> = {
     dashboard: <DashboardPanel />,
+    import: <ImportPanel />,
     ledger: <LedgerPanel initialSearchKeyword={ledgerSearchKeyword} />,
     graph: <GraphPanel onNodeClick={(nodeId) => {
       setLedgerSearchKeyword(nodeId);
@@ -138,7 +145,7 @@ export default function App() {
           style={{
             borderBottom: 'none',
             lineHeight: '56px',
-            minWidth: 350,
+            minWidth: 500,
             justifyContent: 'center'
           }}
         />
@@ -238,7 +245,16 @@ export default function App() {
                 overflow: 'hidden',
               }}
             >
-              {user?.avatar ? <img src={user.avatar} alt="avatar" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : <UserOutlined />}
+              {user?.avatar && !avatarError ? (
+                <img
+                  src={user.avatar}
+                  alt="avatar"
+                  onError={() => setAvatarError(true)}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              ) : (
+                <UserOutlined />
+              )}
             </div>
             <span style={{ fontWeight: 500 }}>{user?.username}</span>
           </Button>
@@ -263,3 +279,5 @@ export default function App() {
     </Layout>
   );
 }
+
+// trigger hmr

@@ -36,6 +36,10 @@ class AppConfig:
     chat_llm: LLMConfig = field(default_factory=LLMConfig)
     # 视觉多模态模型 (OCR)
     ocr_llm: LLMConfig = field(default_factory=LLMConfig)
+    # PaddleOCR 配置
+    paddle_ocr_token: str = ""
+    # MinerU OCR 配置
+    mineru_api_key: str = ""
     # 钉钉（保留用于未来功能）
     dingtalk_webhook: str = ""
     dingtalk_secret: str = ""

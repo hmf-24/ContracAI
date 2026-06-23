@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 def main():
     root = Path(__file__).parent.parent
     src_file = root / "附件1.6采购-运维技术部.xlsx"
-    dst_file = root / "mock_ledger.xlsx"
+    dst_file = root / "../data/mock/mock_ledger.xlsx"
     
     if not src_file.exists():
         print(f"Source file {src_file} not found. Cannot generate mock data based on template.")

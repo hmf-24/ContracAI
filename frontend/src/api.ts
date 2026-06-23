@@ -41,7 +41,8 @@ async function request<T = any>(
   
   if (!resp.ok) {
     const errBody = await resp.json().catch(() => ({}));
-    throw new Error(errBody.detail || `请求失败 (${resp.status})`);
+    const detail = errBody.detail;
+    throw new Error(typeof detail === 'object' ? JSON.stringify(detail) : (detail || `请求失败 (${resp.status})`));
   }
   return resp.json();
 }
@@ -116,6 +117,14 @@ export async function getContracts() {
   return request<{ contracts: any[] }>('/contracts');
 }
 
+/** 更新合同台账排序 */
+export async function updateContractsOrder(ids: number[]) {
+  return request<{ status: string }>('/ledger/reorder', {
+    method: 'POST',
+    body: JSON.stringify({ ids })
+  });
+}
+
 export async function searchContractsAdvanced(params: Record<string, any>) {
   return request<{ contracts: any[] }>('/contracts/search', {
     method: 'POST',
@@ -176,7 +185,7 @@ export async function uploadDocument(file: File) {
     const errBody = await resp.json().catch(() => ({}));
     throw new Error(errBody.detail || `上传失败 (${resp.status})`);
   }
-  return resp.json() as Promise<{ status: string; extracted: Record<string, any> }>;
+  return resp.json() as Promise<{ status: string; extracted: Record<string, any>; file_url?: string; file_type?: string }>;
 }
 
 export async function checkAuth() {
@@ -228,6 +237,39 @@ export async function deleteContract(rowNumber: number) {
    系统配置
    ──────────────────────────────────────────────────────────── */
 
+/** 获取现金流沙盘推演结果 */
+export async function getCashflowSimulation() {
+  return request<any>('/simulation/cashflow');
+}
+
+/* ────────────────────────────────────────────────────────────
+   技能管理 (Skills)
+   ──────────────────────────────────────────────────────────── */
+
+export async function getSkills() {
+  return request<{ skills: any[] }>('/skills');
+}
+
+export async function saveSkill(data: Record<string, any>) {
+  return request<{ status: string; skill: any }>('/skills', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function toggleSkill(skillId: string, enabled: boolean) {
+  return request<{ status: string }>(`/skills/${skillId}/toggle`, {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export async function deleteSkill(skillId: string) {
+  return request<{ status: string }>(`/skills/${skillId}`, {
+    method: 'DELETE',
+  });
+}
+
 /** 获取当前配置 */
 export async function getConfig() {
   return request<any>('/config');
@@ -241,7 +283,20 @@ export async function updateConfig(data: Record<string, any>) {
   });
 }
 
-/** 获取现金流沙盘推演结果 */
-export async function getCashflowSimulation() {
-  return request<any>('/simulation/cashflow');
+/** 上传付款附件 */
+export async function uploadAttachment(file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const headers: Record<string, string> = {};
+  const token = localStorage.getItem('token');
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const resp = await fetch(`${API_BASE}/attachments/upload`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+  if (!resp.ok) throw new Error('附件上传失败');
+  return resp.json();
 }

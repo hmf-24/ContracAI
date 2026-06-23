@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 
-from .config import get_config
+from ..core.config import get_config
 
 
 class DingTalkBot:

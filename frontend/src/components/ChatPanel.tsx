@@ -32,6 +32,7 @@ const ACTION_LABELS: Record<string, string> = {
   append_payment: '💰 追加付款',
   search_contract: '🔍 查询合同',
   update_status: '🗂️ 更新状态',
+  propose_skill: '💡 技能沉淀建议',
 };
 
 /* ────────────────────────────────────────────────────────────
@@ -186,6 +187,16 @@ export default function ChatPanel({ selectedContracts = [], onLedgerUpdate }: { 
     ]);
 
     try {
+      if (toolCall.function === 'propose_skill') {
+        const { saveSkill } = await import('../api');
+        await saveSkill(toolCall.arguments!);
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: `✅ 技能「${toolCall.arguments!.title}」已成功保存！您可以在设置中管理它。下次您可以直接对我说触发条件来执行。` },
+        ]);
+        return;
+      }
+
       const result = await executeOperation(
         toolCall.function!,
         toolCall.arguments!
@@ -430,23 +441,35 @@ function ConfirmCard({
 
       {/* 字段列表 */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {Object.entries(args).map(([key, value]) => (
-          <div
-            key={key}
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              fontSize: 13,
-              padding: '4px 0',
-              borderBottom: '1px solid rgba(255,255,255,0.08)',
-            }}
-          >
-            <span style={{ color: 'rgba(255,255,255,0.45)' }}>{key}</span>
-            <span style={{ fontWeight: 500, color: '#fff' }}>
-              {String(value)}
-            </span>
-          </div>
-        ))}
+        {Object.entries(args).map(([key, value]) => {
+          if (key === 'steps' && Array.isArray(value)) {
+            return (
+              <div key={key} style={{ marginTop: 8, padding: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: 8 }}>
+                <div style={{ color: 'rgba(255,255,255,0.6)', marginBottom: 4 }}>执行步骤：</div>
+                <ol style={{ margin: 0, paddingLeft: 20, color: '#fff', fontSize: 13 }}>
+                  {value.map((step, idx) => <li key={idx}>{step}</li>)}
+                </ol>
+              </div>
+            );
+          }
+          return (
+            <div
+              key={key}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: 13,
+                padding: '4px 0',
+                borderBottom: '1px solid rgba(255,255,255,0.08)',
+              }}
+            >
+              <span style={{ color: 'rgba(255,255,255,0.45)' }}>{key}</span>
+              <span style={{ fontWeight: 500, color: '#fff', textAlign: 'right', maxWidth: '70%' }}>
+                {String(value)}
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       {/* 操作按钮 */}
