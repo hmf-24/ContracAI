@@ -7,10 +7,16 @@ import uuid
 import zipfile
 import io
 import json
+import glob
+import os
 
 async def inspect():
     token = "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ.eyJqdGkiOiI3NjMwMDg0MCIsInJvbCI6IlJPTEVfUkVHSVNURVIiLCJpc3MiOiJPcGVuWExhYiIsImlhdCI6MTc4MjIwMzA4OSwiY2xpZW50SWQiOiJsa3pkeDU3bnZ5MjJqa3BxOXgydyIsInBob25lIjoiIiwib3BlbklkIjpudWxsLCJ1dWlkIjoiY2NiNWM1ZjMtODU5Zi00YjZhLThjZTAtNGU4MTUxY2FlZjcxIiwiZW1haWwiOiIiLCJleHAiOjE3ODk5NzkwODl9.EQulJaArx5TY-vpDK7tA19_5OuGbzqOdyh0UrEvmPdMKWjaLGQvx_3_JHgCnOT2Ir233kvudSYYsNHjcVWmcww"
-    file_path = Path(r"C:\Users\12818\Desktop\《养老机构服务合同》　GF—2016—2001.pdf")
+    pdf_files = glob.glob(os.path.join("uploads", "contracts", "*.pdf"))
+    if not pdf_files:
+        print("No PDF files found.")
+        return
+    file_path = Path(pdf_files[-1])
     
     file_name = file_path.name
     data_id = str(uuid.uuid4())
@@ -41,21 +47,19 @@ async def inspect():
         print("Downloading zip...")
         zip_res = await client.get(zip_url, timeout=60.0)
         with zipfile.ZipFile(io.BytesIO(zip_res.content)) as z:
-            print("Zip contents:", z.namelist())
             for name in z.namelist():
-                if name.endswith('.json'):
-                    print(f"Found JSON: {name}")
+                if name == 'layout.json':
                     data = json.loads(z.read(name))
-                    print("JSON keys:", list(data.keys()))
-                    if "pdf_info" in data:
-                        print("pdf_info length:", len(data["pdf_info"]))
-                        if len(data["pdf_info"]) > 0:
-                            print("pdf_info[0] keys:", list(data["pdf_info"][0].keys()))
-                            # if it has blocks, print a block
-                            if "preproc_blocks" in data["pdf_info"][0]:
-                                print("Sample block:", data["pdf_info"][0]["preproc_blocks"][0])
-                            if "blocks" in data["pdf_info"][0]:
-                                print("Sample block:", data["pdf_info"][0]["blocks"][0])
+                    print("layout.json keys:", data.keys())
+                    if "pdf_info" in data and len(data["pdf_info"]) > 0:
+                        page = data["pdf_info"][0]
+                        print("page keys:", page.keys())
+                        print("page_info:", page.get("page_info"))
+                elif name.endswith('_content_list.json'):
+                    data = json.loads(z.read(name))
+                    if isinstance(data, list) and len(data) > 0:
+                        print("content_list first item:", data[0])
 
 if __name__ == "__main__":
     asyncio.run(inspect())
+

@@ -4,7 +4,7 @@ import { ReloadOutlined, WarningOutlined, BulbOutlined, ProfileOutlined, UploadO
 import { getContracts, getWarnings, executeOperation, analyzeRisk, updateContract, updateContractsOrder, deleteContract, uploadAttachment } from '../api';
 import dayjs from 'dayjs';
 import { useAuth } from '../contexts/AuthContext';
-import ImportPanel from './ImportPanel';
+
 import ChatPanel from './ChatPanel';
 import ContractFileViewer from './ContractFileViewer';
 import type { ColumnsType } from 'antd/es/table';
@@ -85,8 +85,7 @@ export default function LedgerPanel({ initialSearchKeyword = '' }: { initialSear
   const [analyzingRisk, setAnalyzingRisk] = useState(false);
   const [riskData, setRiskData] = useState<any[] | null>(null);
 
-  // Import Modal state
-  const [importVisible, setImportVisible] = useState(false);
+
 
   // 合同原文预览状态
   const [filePreviewVisible, setFilePreviewVisible] = useState(false);
@@ -461,9 +460,7 @@ export default function LedgerPanel({ initialSearchKeyword = '' }: { initialSear
           >
             定制化导出 ({selectedRowKeys.length})
           </Button>
-          {user?.role === 'admin' && (
-            <Button type="primary" icon={<UploadOutlined />} onClick={() => setImportVisible(true)}>导入新合同</Button>
-          )}
+
           <Button icon={<ReloadOutlined />} onClick={loadData} loading={loading}>刷新</Button>
         </Space>
       </div>
@@ -883,19 +880,6 @@ export default function LedgerPanel({ initialSearchKeyword = '' }: { initialSear
         />
       </Drawer>
 
-
-      <Modal
-        title="导入新合同"
-        open={importVisible}
-        onCancel={() => setImportVisible(false)}
-        footer={null}
-        width={800}
-        destroyOnClose
-      >
-        <div style={{ maxHeight: '70vh', overflowY: 'auto' }}>
-          <ImportPanel />
-        </div>
-      </Modal>
 
       <Modal
         title="定制化导出"

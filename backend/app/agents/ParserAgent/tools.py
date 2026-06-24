@@ -119,12 +119,20 @@ class DocParser:
     async def _parse_with_ocr(self, file_path: Path) -> dict[str, Any]:
         """使用 MinerU 或 PaddleOCR 解析 PDF 或图像，然后提取结构化数据"""
         mineru_key = get_config().mineru_api_key
+        md_text = ""
+        raw_bboxes = []
+        
         if mineru_key:
-            md_text = await self._extract_with_mineru_async(file_path, mineru_key)
+            try:
+                print(f"尝试使用 MinerU 解析: {file_path}")
+                md_text, raw_bboxes = await self._extract_with_mineru_async(file_path, mineru_key)
+            except Exception as e:
+                print(f"MinerU 解析失败 ({e})，降级使用 PaddleOCR")
+                md_text, raw_bboxes = await self._extract_with_paddleocr_async(file_path)
         else:
-            md_text = await self._extract_with_paddleocr_async(file_path)
+            md_text, raw_bboxes = await self._extract_with_paddleocr_async(file_path)
             
-        if not md_text.strip():
+        if not md_text or not md_text.strip():
             raise Exception("OCR 提取结果为空")
         return await self._extract_from_text(md_text, str(file_path), raw_bboxes)
 
@@ -158,11 +166,14 @@ class DocParser:
             
             # 2. 上传文件
             print(f"MinerU 任务已创建，batch_id: {batch_id}，正在上传文件...")
+            import requests
             with open(file_path, "rb") as f:
                 file_bytes = f.read()
-                upload_headers = {"Content-Length": str(len(file_bytes))}
-                upload_res = await client.put(upload_url, content=file_bytes, headers=upload_headers, timeout=120.0)
-                upload_res.raise_for_status()
+                # 使用 requests 进行同步上传，避免 httpx 的 chunked encoding 导致 S3 报错
+                # 此处必须不要加 Content-Type，否则 OSS 签名可能校验失败返回 403
+                put_res = requests.put(upload_url, data=file_bytes, timeout=120.0)
+                if put_res.status_code != 200:
+                    raise Exception(f"MinerU 上传失败: HTTP {put_res.status_code} - {put_res.text}")
                 
             # 3. 轮询结果
             print("MinerU 文件上传成功，等待解析...")
@@ -191,7 +202,7 @@ class DocParser:
                     raise Exception(f"MinerU 解析失败: {err_msg}")
                     
                 print(f"MinerU 任务进行中，当前状态: {state}")
-                await asyncio.sleep(5)
+                await asyncio.sleep(3)
                 
             # 4. 下载 zip 包并提取 markdown
             print("MinerU 解析完成，正在下载并提取结果...")
@@ -199,6 +210,7 @@ class DocParser:
             zip_res.raise_for_status()
             
             with zipfile.ZipFile(io.BytesIO(zip_res.content)) as z:
+                print(f"[DEBUG] zip namelist: {z.namelist()}")
                 # 寻找 full.md 或其他 md 文件
                 md_files = [name for name in z.namelist() if name.endswith('.md')]
                 if not md_files:
@@ -211,34 +223,85 @@ class DocParser:
                 
                 # 寻找 json 文件并提取 bbox
                 raw_bboxes = []
-                json_files = [name for name in z.namelist() if name.endswith('.json')]
-                for json_file in json_files:
+                # 首先读取 layout.json 获取每页宽高
+                page_dims = {}
+                layout_files = [name for name in z.namelist() if name.endswith('layout.json')]
+                if layout_files:
                     try:
-                        json_data = json.loads(z.read(json_file))
-                        if "pdf_info" in json_data:
-                            for page in json_data["pdf_info"]:
-                                page_num = page.get("page_idx", 0) + 1
-                                blocks = page.get("preproc_blocks", page.get("blocks", []))
-                                for block in blocks:
-                                    # 有的直接有 text，有的在 lines 里
-                                    if "lines" in block:
-                                        for line in block["lines"]:
-                                            if "text" in line and "bbox" in line:
-                                                bbox = line["bbox"]
-                                                if len(bbox) == 4:
-                                                    raw_bboxes.append({
-                                                        "text": line["text"],
-                                                        "bbox": [bbox[0], bbox[1], bbox[2], bbox[3], page_num]
-                                                    })
-                                    elif "text" in block and "bbox" in block:
-                                        bbox = block["bbox"]
-                                        if len(bbox) == 4:
-                                            raw_bboxes.append({
-                                                "text": block["text"],
-                                                "bbox": [bbox[0], bbox[1], bbox[2], bbox[3], page_num]
-                                            })
-                    except Exception:
-                        pass
+                        layout_data = json.loads(z.read(layout_files[0]))
+                        if "pdf_info" in layout_data:
+                            for page in layout_data["pdf_info"]:
+                                p_idx = page.get("page_idx", 0)
+                                p_info = page.get("page_info", page)
+                                p_w = p_info.get("width", page.get("width", 1))
+                                p_h = p_info.get("height", page.get("height", 1))
+                                page_dims[p_idx] = (p_w, p_h)
+                    except Exception as e:
+                        print(f"读取 layout.json 失败: {e}")
+                        
+                # 兼容性 Fallback：如果 page_dims 为空或全为1，使用 pdfplumber 获取真实的 PDF 宽高（单位: 磅/Points）
+                try:
+                    import pdfplumber
+                    with pdfplumber.open(file_path) as pdf:
+                        for i, page in enumerate(pdf.pages):
+                            if i not in page_dims or page_dims[i] == (1, 1):
+                                page_dims[i] = (float(page.width), float(page.height))
+                except Exception as e:
+                    print(f"pdfplumber 回退获取宽高失败: {e}")
+
+                json_files = [name for name in z.namelist() if name.endswith('_content_list.json')]
+                if json_files:
+                    try:
+                        json_data = json.loads(z.read(json_files[0]))
+                        if isinstance(json_data, list):
+                            for block in json_data:
+                                if "text" in block and "bbox" in block:
+                                    bbox = block["bbox"]
+                                    if len(bbox) == 4:
+                                        p_idx = block.get("page_idx", 0)
+                                        pw, ph = page_dims.get(p_idx, (1, 1))
+                                        
+                                        # 如果获取不到真实宽高（还是 1），避免将坐标误认为极大比例
+                                        if pw == 1 or ph == 1:
+                                            nx0, ny0, nx1, ny1 = bbox[0], bbox[1], bbox[2], bbox[3]
+                                        else:
+                                            # Normalize coordinates to [0, 1] percentages
+                                            nx0 = bbox[0] / pw
+                                            ny0 = bbox[1] / ph
+                                            nx1 = bbox[2] / pw
+                                            ny1 = bbox[3] / ph
+                                        
+                                        raw_bboxes.append({
+                                            "text": block["text"],
+                                            "bbox": [nx0, ny0, nx1, ny1, p_idx + 1]
+                                        })
+                    except Exception as e:
+                        print(f"提取 bbox 失败: {e}")
+                        
+                # 极端情况兜底：如果有些 bbox 还是绝对坐标（比如 pdfplumber 失败且 MinerU 返回绝对像素），则利用页面最大值进行自适应归一化
+                page_maxes = {}
+                for item in raw_bboxes:
+                    box = item["bbox"]
+                    p = box[4]
+                    if box[0] > 2 or box[1] > 2:
+                        mx, my = page_maxes.get(p, (1, 1))
+                        page_maxes[p] = (max(mx, box[2]), max(my, box[3]))
+                        
+                if page_maxes:
+                    for p in page_maxes:
+                        page_maxes[p] = (page_maxes[p][0] * 1.05, page_maxes[p][1] * 1.05)
+                    for item in raw_bboxes:
+                        box = item["bbox"]
+                        p = box[4]
+                        if box[0] > 2 or box[1] > 2:
+                            pw, ph = page_maxes.get(p, (1, 1))
+                            if pw > 1 and ph > 1:
+                                item["bbox"] = [box[0] / pw, box[1] / ph, box[2] / pw, box[3] / ph, p]
+                
+                print(f"[DEBUG] page_dims: {page_dims}")
+                print(f"[DEBUG] raw_bboxes count: {len(raw_bboxes)}")
+                if raw_bboxes:
+                    print(f"[DEBUG] sample bbox: {raw_bboxes[0]}")
                         
                 return md_text, raw_bboxes
 
@@ -326,6 +389,29 @@ class DocParser:
                                 "text": block_text.strip(),
                                 "bbox": bbox
                             })
+                            
+                # 归一化 PaddleOCR 的绝对坐标为百分比
+                page_maxes = {}
+                for item in raw_bboxes:
+                    box = item["bbox"]
+                    p = box[4]
+                    mx, my = page_maxes.get(p, (1, 1))
+                    page_maxes[p] = (max(mx, box[2]), max(my, box[3]))
+                
+                # 加上一点边距，避免最大的框刚好碰到边缘
+                for p in page_maxes:
+                    page_maxes[p] = (page_maxes[p][0] * 1.05, page_maxes[p][1] * 1.05)
+                    
+                for item in raw_bboxes:
+                    box = item["bbox"]
+                    p = box[4]
+                    pw, ph = page_maxes.get(p, (1, 1))
+                    if pw > 1 and ph > 1:
+                        item["bbox"] = [
+                            box[0] / pw, box[1] / ph,
+                            box[2] / pw, box[3] / ph,
+                            p
+                        ]
                 
                 print(f"PaddleOCR 解析完成，Markdown 长度: {len(md_text)}")
                 return md_text, raw_bboxes
@@ -386,7 +472,7 @@ class DocParser:
             data = {"_raw_response": response_text, "_parse_error": True}
 
         # 展平 {value, confidence} 结构为前端友好的格式
-        data = self._flatten_confidence(data, raw_bboxes)
+        data = self._flatten_confidence(data, raw_bboxes, source_file=source)
 
         data["_source_file"] = source
         return data
@@ -432,14 +518,58 @@ class DocParser:
                 
         return best_bbox
 
-    def _flatten_confidence(self, data: dict, raw_bboxes: list = None) -> dict:
+    def _flatten_confidence(self, data: dict, raw_bboxes: list = None, source_file: str = None) -> dict:
         """
         将 LLM 返回的 {value, confidence} 嵌套结构展平。
-        输出：字段直接取 value 值，同时生成 _confidence 映射表。
+        优先尝试用 pdfplumber 提取精确边界框，失败则回退到 MinerU/PaddleOCR 的 raw_bboxes。
         """
         confidence_map = {}
         bbox_map = {}
         flat_data = {}
+        
+        pdf_pages = []
+        page_dims = {}
+        if source_file and source_file.lower().endswith('.pdf'):
+            try:
+                import pdfplumber
+                # Keep pdf object alive during this function
+                pdf = pdfplumber.open(source_file)
+                for i, page in enumerate(pdf.pages):
+                    page_dims[i+1] = (page.width, page.height)
+                    pdf_pages.append((i+1, page))
+            except Exception as e:
+                print(f"[DEBUG] pdfplumber 加载失败: {e}")
+
+        def find_bbox(value_str):
+            value_str = str(value_str).strip()
+            if not value_str: return None
+            
+            # 1. 优先使用 pdfplumber 的全文搜索定位完整短语 (最精准)
+            if pdf_pages:
+                for p_idx, page in pdf_pages:
+                    try:
+                        matches = page.search(value_str)
+                        if matches:
+                            m = matches[0]
+                            pw, ph = page_dims.get(p_idx, (595.276, 841.89))
+                            return [m["x0"]/pw, m["top"]/ph, m["x1"]/pw, m["bottom"]/ph, p_idx]
+                    except:
+                        pass
+                
+                # 1.1 如果没搜到，尝试拆分成单词搜索
+                val_lower = value_str.lower()
+                for p_idx, page in pdf_pages:
+                    try:
+                        for w in page.extract_words():
+                            text = w["text"].lower()
+                            if val_lower in text or text in val_lower:
+                                pw, ph = page_dims.get(p_idx, (595.276, 841.89))
+                                return [w["x0"]/pw, w["top"]/ph, w["x1"]/pw, w["bottom"]/ph, p_idx]
+                    except:
+                        pass
+
+            # 2. 退回使用 MinerU 的模糊匹配
+            return self._find_bbox_for_value(value_str, raw_bboxes)
 
         for key, val in data.items():
             if key.startswith("_"):
@@ -449,14 +579,13 @@ class DocParser:
             if isinstance(val, dict) and "value" in val:
                 flat_data[key] = val["value"]
                 confidence_map[key] = val.get("confidence", "medium")
-                # 反查 bbox
-                bbox = self._find_bbox_for_value(val["value"], raw_bboxes)
+                bbox = find_bbox(val["value"])
                 if bbox:
                     bbox_map[key] = bbox
             else:
                 flat_data[key] = val
-                confidence_map[key] = "high"  # 没带 confidence 的默认为 high
-                bbox = self._find_bbox_for_value(val, raw_bboxes)
+                confidence_map[key] = "high"
+                bbox = find_bbox(val)
                 if bbox:
                     bbox_map[key] = bbox
 
@@ -464,7 +593,6 @@ class DocParser:
         if bbox_map:
             flat_data["_bboxes"] = bbox_map
             
-        # 添加完整的 raw_bboxes 方便前端做“全局预高亮”
         if raw_bboxes:
             flat_data["_raw_bboxes"] = raw_bboxes
             

@@ -24,13 +24,18 @@ async def chat_endpoint(body: ChatRequest, current_user: dict = Depends(get_curr
 async def execute_endpoint(body: dict, current_user: dict = Depends(get_current_user)):
     try:
         session_id = current_user.get("username", "default")
-        result = await llm_router.execute_tool(
-            tool_name=body.get("tool_name"),
-            arguments=body.get("arguments", {}),
-            session_id=session_id,
-            context=body.get("context", {})
-        )
-        return {"result": result}
+        tool_name = body.get("action") or body.get("tool_name")
+        arguments = body.get("params") or body.get("arguments", {})
+        
+        if tool_name == "create_contract":
+            from ..core.db import insert_contract
+            new_id = insert_contract(arguments)
+            result = f"合同已成功创建，ID: {new_id}"
+        else:
+            # Fallback or error if other tools are called
+            result = f"未实现的工具: {tool_name}"
+
+        return {"result": result, "status": "success"}
     except Exception as e:
         raise HTTPException(500, f"工具执行失败: {str(e)}")
 

@@ -6,11 +6,8 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-// 设置 worker
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+// 设置 worker，使用 unpkg 保证版本与 react-pdf 内部的 pdfjs 严格一致
+pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 export interface BBoxInfo {
   text?: string;
@@ -116,54 +113,55 @@ export default function ContractFileViewer({
     // 过滤出这一页的 bboxes
     const pageBboxes = allBboxes.filter(b => b.bbox && b.bbox.length >= 5 && b.bbox[4] === pageNum);
     
-    // 渲染方法：直接使用绝对定位，利用 react-pdf 的 scale 特性
-    // react-pdf 内部渲染时，1个单位就是 1个 PDF point。
-    // 如果 OCR 引擎（如 MinerU）返回的坐标是 PDF points，我们只需要将它们乘以当前的 scale。
-    const scale = containerWidth ? containerWidth / metrics.width : 1;
+    // 我们目前收到的 bbox 已经是 0-1 的百分比
+    const renderWidth = containerWidth || metrics.width;
+    const renderHeight = renderWidth * (metrics.height / metrics.width);
 
     return (
       <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
-        {pageBboxes.map((b, i) => {
-          const [x0, y0, x1, y1] = b.bbox;
-          // 预高亮：淡黄色背景
+        {/* 焦点高亮 (Active Bbox) */}
+        {activeBbox && activeBbox.length >= 5 && activeBbox[4] === pageNum && (() => {
+          let [ax0, ay0, ax1, ay1] = activeBbox;
+          if (ax0 > 2 || ay0 > 2) {
+            ax0 = ax0 / metrics.width;
+            ay0 = ay0 / metrics.height;
+            ax1 = ax1 / metrics.width;
+            ay1 = ay1 / metrics.height;
+          }
           return (
             <div
-              key={`bbox-${i}`}
+              id="active-highlight-box"
               style={{
                 position: 'absolute',
-                left: x0 * scale,
-                top: y0 * scale,
-                width: (x1 - x0) * scale,
-                height: (y1 - y0) * scale,
-                backgroundColor: 'rgba(255, 215, 0, 0.2)', // 浅金黄色
-                border: '1px solid rgba(255, 215, 0, 0.5)',
-                borderRadius: 2,
+                left: ax0 * renderWidth,
+                top: ay0 * renderHeight,
+                width: (ax1 - ax0) * renderWidth,
+                height: (ay1 - ay0) * renderHeight,
+                backgroundColor: 'rgba(250, 173, 20, 0.3)', // 金黄色高亮
+                border: '2px solid #faad14',
+                borderRadius: 4,
+                boxShadow: '0 0 12px rgba(250, 173, 20, 0.8)',
+                zIndex: 10,
+                transition: 'all 0.3s ease',
               }}
             />
           );
-        })}
-
-        {/* 焦点高亮 (Active Bbox) */}
-        {activeBbox && activeBbox.length >= 5 && activeBbox[4] === pageNum && (
-          <div
-            style={{
-              position: 'absolute',
-              left: activeBbox[0] * scale,
-              top: activeBbox[1] * scale,
-              width: (activeBbox[2] - activeBbox[0]) * scale,
-              height: (activeBbox[3] - activeBbox[1]) * scale,
-              backgroundColor: 'rgba(255, 50, 50, 0.4)', // 红色高亮强调
-              border: '2px solid rgba(255, 50, 50, 0.8)',
-              borderRadius: 3,
-              boxShadow: '0 0 10px rgba(255, 50, 50, 0.6)',
-              zIndex: 10,
-              transition: 'all 0.3s ease',
-            }}
-          />
-        )}
+        })()}
       </div>
     );
   };
+
+  // 监听 activeBbox 变化，自动滚动到高亮区域
+  useEffect(() => {
+    if (activeBbox && activeBbox.length >= 5) {
+      setTimeout(() => {
+        const el = document.getElementById('active-highlight-box');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 100);
+    }
+  }, [activeBbox]);
 
   return (
     <div style={{

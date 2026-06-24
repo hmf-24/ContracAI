@@ -90,6 +90,9 @@ export default function ImportPanel() {
         
         setFieldBboxMap(data.extracted._bboxes || {});
         setAllBboxes(data.extracted._raw_bboxes || []);
+        console.log('[DEBUG] _raw_bboxes count:', (data.extracted._raw_bboxes || []).length);
+        console.log('[DEBUG] _raw_bboxes sample:', (data.extracted._raw_bboxes || [])[0]);
+        console.log('[DEBUG] _bboxes (field map):', data.extracted._bboxes);
 
         const formData = { ...data.extracted };
         delete formData._confidence;
@@ -219,18 +222,6 @@ export default function ImportPanel() {
           </Button>
         </div>
 
-        {/* 导航菜单 */}
-        <div style={{ padding: '0 12px' }}>
-          <div style={{ padding: '12px 16px', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, color: '#fff', background: 'rgba(255,255,255,0.05)' }}>
-            <AppstoreOutlined style={{ fontSize: 16 }} />
-            <span style={{ fontSize: 14 }}>任务管理</span>
-          </div>
-          <div style={{ padding: '12px 16px', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, color: 'rgba(255,255,255,0.6)' }}>
-            <StarOutlined style={{ fontSize: 16 }} />
-            <span style={{ fontSize: 14 }}>我的收藏</span>
-          </div>
-        </div>
-
         <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', margin: '16px 20px' }} />
 
         {/* 文件列表 */}
@@ -302,9 +293,6 @@ export default function ImportPanel() {
                   <Button type="primary" size="large" icon={<UploadOutlined />} style={{ width: 160, height: 48, borderRadius: 24 }}>
                     上传文件
                   </Button>
-                  <Button size="large" icon={<FileTextOutlined />} style={{ width: 160, height: 48, borderRadius: 24, background: 'rgba(255,255,255,0.05)', color: '#fff', borderColor: 'transparent' }}>
-                    网页链接
-                  </Button>
                 </div>
               </Upload>
               <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, marginTop: 24 }}>
@@ -312,38 +300,6 @@ export default function ImportPanel() {
               </Text>
             </div>
 
-            {/* 示例 */}
-            <div style={{ width: 700, marginTop: 48 }}>
-              <Text style={{ color: '#fff', fontSize: 15, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-                <FileTextOutlined /> 示例
-              </Text>
-              <Row gutter={16}>
-                <Col span={8}>
-                  <Card size="small" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', cursor: 'pointer' }}>
-                    <div style={{ height: 80, background: 'rgba(0,0,0,0.2)', marginBottom: 12, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <FilePdfOutlined style={{ fontSize: 24, color: '#fff' }} />
-                    </div>
-                    <Text strong style={{ color: '#fff', fontSize: 13, display: 'block', textAlign: 'center' }}>标准采购合同.pdf</Text>
-                  </Card>
-                </Col>
-                <Col span={8}>
-                  <Card size="small" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', cursor: 'pointer' }}>
-                    <div style={{ height: 80, background: 'rgba(0,0,0,0.2)', marginBottom: 12, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <FilePdfOutlined style={{ fontSize: 24, color: '#fff' }} />
-                    </div>
-                    <Text strong style={{ color: '#fff', fontSize: 13, display: 'block', textAlign: 'center' }}>房屋租赁协议.pdf</Text>
-                  </Card>
-                </Col>
-                <Col span={8}>
-                  <Card size="small" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', cursor: 'pointer' }}>
-                    <div style={{ height: 80, background: 'rgba(0,0,0,0.2)', marginBottom: 12, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <FilePdfOutlined style={{ fontSize: 24, color: '#fff' }} />
-                    </div>
-                    <Text strong style={{ color: '#fff', fontSize: 13, display: 'block', textAlign: 'center' }}>框架合作协议.pdf</Text>
-                  </Card>
-                </Col>
-              </Row>
-            </div>
           </div>
         )}
 
@@ -364,11 +320,7 @@ export default function ImportPanel() {
 
             {/* 右侧：提取结果表单 */}
             <div style={{ width: 400, padding: 24, overflowY: 'auto' }}>
-              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: '#fff' }}>📋 提取结果</h3>
-              <p style={{ fontSize: 12, color: 'var(--color-ink-tertiary)', marginBottom: 20 }}>
-                <WarningOutlined style={{ color: '#faad14', marginRight: 4 }} />
-                高亮字段请重点核对原文
-              </p>
+              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20, color: '#fff' }}>📋 提取结果</h3>
 
               <Form form={form} layout="vertical" size="middle">
                 {EDITABLE_FIELDS.map((field) => (
@@ -379,7 +331,6 @@ export default function ImportPanel() {
                         if (fieldBboxMap[field]) setActiveBbox(fieldBboxMap[field]);
                         else setActiveBbox(undefined);
                       }}
-                      onBlur={() => setActiveBbox(undefined)}
                     />
                   </Form.Item>
                 ))}
