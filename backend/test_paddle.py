@@ -1,16 +1,16 @@
-from fpdf import FPDF
+# from fpdf import FPDF
 import asyncio
 import json
 import httpx
 from pathlib import Path
 
-def create_pdf():
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=15)
-    pdf.cell(200, 10, txt="This is a contract. Name: Project X", ln=1, align='C')
-    pdf.cell(200, 10, txt="Total amount: 50000.", ln=2, align='C')
-    pdf.output("dummy.pdf")
+# def create_pdf():
+#     pdf = FPDF()
+#     pdf.add_page()
+#     pdf.set_font("Arial", size=15)
+#     pdf.cell(200, 10, txt="This is a contract. Name: Project X", ln=1, align='C')
+#     pdf.cell(200, 10, txt="Total amount: 50000.", ln=2, align='C')
+#     pdf.output("dummy.pdf")
 
 async def test():
     JOB_URL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
@@ -31,7 +31,7 @@ async def test():
         "optionalPayload": json.dumps(optional_payload)
     }
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(trust_env=False) as client:
         with open("dummy.pdf", "rb") as f:
             files = {"file": f}
             job_response = await client.post(JOB_URL, headers=headers, data=data, files=files, timeout=60.0)
@@ -71,5 +71,5 @@ async def test():
             await asyncio.sleep(2)
 
 if __name__ == "__main__":
-    create_pdf()
+    # create_pdf()
     asyncio.run(test())

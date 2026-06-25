@@ -45,6 +45,8 @@ class ContractRecord:
     合同未付款合计: float = 0.0
     退履约保证金质保金: str = ""
     payments: list[dict[str, Any]] = field(default_factory=list)
+    direction: str = "" # "income" or "expense"
+    project_name: str = ""
 
 
 class LedgerManager:

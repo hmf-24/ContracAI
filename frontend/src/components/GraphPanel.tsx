@@ -83,9 +83,11 @@ export default function GraphPanel({ onNodeClick }: { onNodeClick?: (nodeId: str
         height={dimensions.height}
         graphData={graphData}
         nodeLabel="name"
+        dagMode="lr"
+        dagLevelDistance={200}
         onNodeClick={handleNodeClick}
-        linkColor={(link: any) => link.name === '依赖' ? 'rgba(255, 100, 100, 0.6)' : 'rgba(100, 200, 255, 0.3)'}
-        linkWidth={(link: any) => link.name === '依赖' ? 3 : 1}
+        linkColor={(link: any) => (link.name === '收入流入' || link.name === '支出流出') ? 'rgba(0, 229, 255, 0.8)' : 'rgba(100, 200, 255, 0.3)'}
+        linkWidth={(link: any) => (link.name === '收入流入' || link.name === '支出流出') ? 3 : 1}
         linkDirectionalArrowLength={4}
         linkCurvature={0.2}
         linkCanvasObjectMode={() => 'after'}
@@ -130,19 +132,21 @@ export default function GraphPanel({ onNodeClick }: { onNodeClick?: (nodeId: str
           const isContract = node.group === 1 || node.group === 2;
           const isParty = node.group === 3;
           const isHandler = node.group === 4;
+          const isProject = node.group === 5;
 
           // 减小节点体积乘数，避免画面被大圆圈占满
-          const radius = Math.sqrt((node.val as number) || 1) * 2 + 4;
+          const radius = isProject ? 16 : Math.sqrt((node.val as number) || 1) * 2 + 4;
           
           // 绘制圆形背景
           ctx.beginPath();
           ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI, false);
-          ctx.fillStyle = isContract ? (node.group === 1 ? '#4facfe' : '#00f2fe') : isParty ? '#f6d365' : '#a18cd1';
+          ctx.fillStyle = isContract ? (node.group === 1 ? '#4facfe' : '#ff758c') : isParty ? '#f6d365' : isProject ? '#00c6ff' : '#a18cd1';
           ctx.fill();
           
           // 绘制 Emoji 图标
           let icon = '';
-          if (isContract) icon = '📄';
+          if (isProject) icon = '🌟';
+          else if (isContract) icon = '📄';
           else if (isParty) icon = '🏢';
           else if (isHandler) icon = '🧑';
           
@@ -186,10 +190,11 @@ export default function GraphPanel({ onNodeClick }: { onNodeClick?: (nodeId: str
         {selectedNode && (
           <Descriptions column={1} bordered size="small">
             <Descriptions.Item label="节点类型">
-              {selectedNode.group === 1 ? '销售合同' : 
-               selectedNode.group === 2 ? '采购合同' : 
+              {selectedNode.group === 1 ? '收入合同' : 
+               selectedNode.group === 2 ? '支出合同' : 
                selectedNode.group === 3 ? '合作方' : 
-               selectedNode.group === 4 ? '经办人' : '未知'}
+               selectedNode.group === 4 ? '经办人' : 
+               selectedNode.group === 5 ? '核心项目' : '未知'}
             </Descriptions.Item>
             <Descriptions.Item label="名称">{selectedNode.name}</Descriptions.Item>
             <Descriptions.Item label="系统 ID">{selectedNode.id}</Descriptions.Item>

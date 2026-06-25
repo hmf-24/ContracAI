@@ -333,6 +333,16 @@ export default function LedgerPanel({ initialSearchKeyword = '' }: { initialSear
       render: (v) => v ? <span style={{ fontWeight: 500, color: 'var(--color-ink)' }}>{v}</span> : <div style={{ textAlign: 'center', color: 'var(--color-ink-tertiary)' }}>-</div>,
     },
     {
+      title: '收支方向',
+      key: 'direction',
+      width: 90,
+      align: 'center',
+      render: (_, record) => {
+        const isIncome = record.direction === 'income' || String(record['合同类型'] || '').includes('销售');
+        return isIncome ? <Tag color="cyan">收入</Tag> : <Tag color="orange">支出</Tag>;
+      }
+    },
+    {
       title: '对方单位',
       dataIndex: '对方单位名称',
       ellipsis: true,

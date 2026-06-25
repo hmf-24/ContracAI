@@ -56,30 +56,37 @@ async def get_graph(current_user: dict = Depends(get_current_user)):
     for c in records:
         contract_id = f"C_{c.get('row_number')}"
         contract_name = c.get('合同名称') or f"未知合同 {c.get('row_number')}"
-        is_sales = "销售" in str(c.get('合同类型', ''))
-        c_group = 1 if is_sales else 2
+        direction = c.get('direction')
+        is_income = (direction == "income") or ("销售" in str(c.get('合同类型', '')))
+        c_group = 1 if is_income else 2
         amount = float(c.get('合同金额') or 0)
         val = max(1, min(10, amount / 100000))
         
         add_node(contract_id, contract_name, c_group, val=val)
         
+        # Add Project Node
+        project_name = c.get('project_name') or c.get('项目名称')
+        if project_name and str(project_name).strip():
+            proj_id = f"PROJ_{str(project_name).strip()}"
+            add_node(proj_id, str(project_name).strip(), 5, val=15)
+            if is_income:
+                links.append({"source": contract_id, "target": proj_id, "name": "收入流入"})
+            else:
+                links.append({"source": proj_id, "target": contract_id, "name": "支出流出"})
+                
+        # Optional Party
         party = c.get('相对方名称') or c.get('对方单位名称')
         if party and str(party).strip():
             party_id = f"P_{str(party).strip()}"
             add_node(party_id, str(party).strip(), 3)
             links.append({"source": contract_id, "target": party_id, "name": "签约方"})
             
-        handler = c.get('经办人')
-        if handler and str(handler).strip() and str(handler).strip() != "-":
-            handler_id = f"H_{str(handler).strip()}"
-            add_node(handler_id, str(handler).strip(), 4)
-            links.append({"source": contract_id, "target": handler_id, "name": "经办人"})
-            
+        # Upstream / Downstream
         parent_sales = c.get('对应销售合同')
         if parent_sales and str(parent_sales).strip() and str(parent_sales).strip() != "-":
             parent_match = next((p for p in records if p.get('合同名称') == str(parent_sales).strip()), None)
             if parent_match:
                 parent_id = f"C_{parent_match.get('row_number')}"
-                links.append({"source": contract_id, "target": parent_id, "name": "依赖"})
+                links.append({"source": parent_id, "target": contract_id, "name": "依托/衍生"})
 
     return {"nodes": nodes, "links": links}

@@ -27,6 +27,26 @@ def init_db():
             conn.execute("ALTER TABLE contracts ADD COLUMN sort_order INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
             pass
+            
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                created_at TEXT
+            )
+        """)
+        
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS invoices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invoice_number TEXT,
+                amount REAL,
+                date TEXT,
+                contract_id INTEGER,
+                data TEXT
+            )
+        """)
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS operation_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,6 +61,41 @@ def init_db():
             )
         """)
         conn.commit()
+
+def insert_project(name: str) -> int:
+    with get_connection() as conn:
+        try:
+            cursor = conn.execute("INSERT INTO projects (name, created_at) VALUES (?, ?)", (name, datetime.now().isoformat()))
+            conn.commit()
+            return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            cursor = conn.execute("SELECT id FROM projects WHERE name = ?", (name,))
+            return cursor.fetchone()[0]
+
+def get_projects() -> List[Dict[str, Any]]:
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT * FROM projects")
+        return [dict(row) for row in cursor]
+
+def insert_invoice(invoice_data: Dict[str, Any]) -> int:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO invoices (invoice_number, amount, date, contract_id, data) VALUES (?, ?, ?, ?, ?)",
+            (
+                invoice_data.get("invoice_number", ""),
+                float(invoice_data.get("amount", 0.0)),
+                invoice_data.get("date", ""),
+                invoice_data.get("contract_id"),
+                json.dumps(invoice_data, ensure_ascii=False)
+            )
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+def get_invoices() -> List[Dict[str, Any]]:
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT * FROM invoices")
+        return [dict(row) for row in cursor]
 
 def clear_db():
     with get_connection() as conn:

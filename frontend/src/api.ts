@@ -242,6 +242,14 @@ export async function getCashflowSimulation() {
   return request<any>('/simulation/cashflow');
 }
 
+export async function getGlobalDashboard() {
+  return request<any>('/dashboard/global');
+}
+
+export async function getProjectDashboard(projectName: string) {
+  return request<any>(`/dashboard/project/${encodeURIComponent(projectName)}`);
+}
+
 /* ────────────────────────────────────────────────────────────
    技能管理 (Skills)
    ──────────────────────────────────────────────────────────── */

@@ -11,6 +11,8 @@ from .api.routes_chat import router as chat_router
 from .api.routes_upload import router as upload_router
 from .api.routes_skills import router as skills_router
 from .api.routes_system import router as system_router
+from .api.routes_dingtalk import router as dingtalk_router
+from .api.routes_dashboard import router as dashboard_router
 
 app = FastAPI(title="Contrac-AI Backend", version="2.0")
 
@@ -29,6 +31,8 @@ app.include_router(chat_router, prefix="/api")
 app.include_router(upload_router, prefix="/api")
 app.include_router(skills_router, prefix="/api")
 app.include_router(system_router, prefix="/api")
+app.include_router(dingtalk_router, prefix="/api")
+app.include_router(dashboard_router, prefix="/api")
 
 # 托管静态文件
 avatar_dir = CONFIG_DIR / "avatars"

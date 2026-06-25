@@ -31,6 +31,8 @@ EXTRACTION_PROMPT = """你是一个专业的合同信息提取助手。请从以
 
 返回格式如下（注意每个字段都是一个对象，包含 value 和 confidence）：
 {{
+  "项目名称": {{"value": "某某智能化弱电项目", "confidence": "high"}},
+  "收支方向": {{"value": "expense", "confidence": "high"}},
   "合同名称": {{"value": "xxx项目采购合同", "confidence": "high"}},
   "合同编号": {{"value": "HT-2025-001", "confidence": "high"}},
   "合同类型": {{"value": "采购", "confidence": "medium"}},
@@ -52,6 +54,8 @@ EXTRACTION_PROMPT = """你是一个专业的合同信息提取助手。请从以
 }}
 
 注意：
+- 请重点识别合同中我方（系统用户/合同保管方）是甲方还是乙方。若我方为甲方（通常代表采购/发包/付款方），则“收支方向”必须返回 "expense"；若我方为乙方（通常代表销售/承包/收款方），则“收支方向”必须返回 "income"。
+- “项目名称”请尽量从合同名称或第一段背景中提炼，如果只是单一采购无项目背景，可填入对方名称或简要事由。
 - 金额统一转换为元（如"50万"转为500000，"伍拾万元"转为500000）
 - 税率转换为小数（如"13%"转为0.13）
 - 日期统一使用 YYYY-MM-DD 格式
@@ -59,6 +63,28 @@ EXTRACTION_PROMPT = """你是一个专业的合同信息提取助手。请从以
 - 付款时间节点：如果合同中有分期付款条款，请逐期提取
 
 合同文本内容：
+{text}
+
+请仅返回 JSON，不要有其他内容。"""
+
+INVOICE_EXTRACTION_PROMPT = """你是一个专业的票据解析助手。请从以下票据/发票文本中仔细提取关键信息，以 JSON 格式返回。
+
+返回格式如下：
+{{
+  "发票号码": {{"value": "12345678", "confidence": "high"}},
+  "开票日期": {{"value": "2025-01-01", "confidence": "high"}},
+  "开票单位名称": {{"value": "某某公司", "confidence": "high"}},
+  "购方单位名称": {{"value": "购买方公司", "confidence": "high"}},
+  "开票总金额": {{"value": 10000, "confidence": "high"}},
+  "项目名称": {{"value": "如果能从明细或备注中推断项目名称", "confidence": "low"}}
+}}
+
+注意：
+- 金额统一转换为元
+- 日期统一使用 YYYY-MM-DD 格式
+- 请尽力从明细或备注中推断所涉及的“项目名称”
+
+文本内容：
 {text}
 
 请仅返回 JSON，不要有其他内容。"""
@@ -72,6 +98,8 @@ VISION_EXTRACTION_PROMPT = """你是一个专业的合同信息提取助手。�
 
 返回格式（每个字段包含 value 和 confidence）：
 {
+  "项目名称": {"value": "某某项目", "confidence": "high"},
+  "收支方向": {"value": "expense", "confidence": "high"},
   "合同名称": {"value": "合同/项目名称", "confidence": "high"},
   "合同编号": {"value": "合同编号", "confidence": "high"},
   "合同类型": {"value": "采购/服务/工程等", "confidence": "medium"},
@@ -90,6 +118,8 @@ VISION_EXTRACTION_PROMPT = """你是一个专业的合同信息提取助手。�
 }
 
 注意：
+- 请识别合同中我方是甲方还是乙方。若我方为甲方（通常代表采购/发包），“收支方向”返回 "expense"；若我方为乙方（通常代表销售/承包），“收支方向”返回 "income"。
+- 尝试提取所属“项目名称”。
 - 金额统一转换为元（如"50万"转为500000）
 - 税率转换为小数（如"13%"转为0.13）
 - 日期统一使用 YYYY-MM-DD 格式
@@ -104,11 +134,12 @@ class DocParser:
     def __init__(self):
         self.client = LLMClient(get_config().chat_llm)
 
-    async def parse_file(self, file_path: str | Path) -> dict[str, Any]:
+    async def parse_file(self, file_path: str | Path, is_invoice: bool = False) -> dict[str, Any]:
         """自动检测文件类型并进行相应解析。"""
         file_path = Path(file_path)
         suffix = file_path.suffix.lower()
 
+        self._current_is_invoice = is_invoice
         if suffix in (".pdf", ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"):
             return await self._parse_with_ocr(file_path)
         elif suffix in (".docx", ".doc"):
@@ -134,7 +165,8 @@ class DocParser:
             
         if not md_text or not md_text.strip():
             raise Exception("OCR 提取结果为空")
-        return await self._extract_from_text(md_text, str(file_path), raw_bboxes)
+        # 通过 kwargs 传递
+        return await self._extract_from_text(md_text, str(file_path), raw_bboxes, getattr(self, '_current_is_invoice', False))
 
     async def _extract_with_mineru_async(self, file_path: Path, token: str) -> str:
         """使用 MinerU 精准解析 API 提取 Markdown 文本。"""
@@ -153,7 +185,7 @@ class DocParser:
             "model_version": "vlm"
         }
         
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(trust_env=False) as client:
             # 1. 申请上传链接
             res = await client.post(batch_url, headers=headers, json=data, timeout=30.0)
             res.raise_for_status()
@@ -171,7 +203,7 @@ class DocParser:
                 file_bytes = f.read()
                 # 使用 requests 进行同步上传，避免 httpx 的 chunked encoding 导致 S3 报错
                 # 此处必须不要加 Content-Type，否则 OSS 签名可能校验失败返回 403
-                put_res = requests.put(upload_url, data=file_bytes, timeout=120.0)
+                put_res = requests.put(upload_url, data=file_bytes, proxies={"http": None, "https": None}, timeout=120.0)
                 if put_res.status_code != 200:
                     raise Exception(f"MinerU 上传失败: HTTP {put_res.status_code} - {put_res.text}")
                 
@@ -325,7 +357,7 @@ class DocParser:
             "optionalPayload": json.dumps(optional_payload)
         }
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(trust_env=False) as client:
             with open(file_path, "rb") as f:
                 files = {"file": f}
                 job_response = await client.post(JOB_URL, headers=headers, data=data, files=files, timeout=60.0)
@@ -435,10 +467,11 @@ class DocParser:
         return await self._extract_from_text(text_content, str(file_path))
 
     async def _extract_from_text(
-        self, text: str, source: str, raw_bboxes: list = None
+        self, text: str, source: str, raw_bboxes: list = None, is_invoice: bool = False
     ) -> dict[str, Any]:
         """使用 LLM 从纯文本中提取结构化数据。"""
-        prompt = EXTRACTION_PROMPT.format(text=text[:8000])
+        template = INVOICE_EXTRACTION_PROMPT if is_invoice else EXTRACTION_PROMPT
+        prompt = template.format(text=text[:8000])
 
         response = await self.client.chat(
             messages=[{"role": "user", "content": prompt}]
